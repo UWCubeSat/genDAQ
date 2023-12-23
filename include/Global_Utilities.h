@@ -733,13 +733,15 @@ template<typename T> class Buffer {
     //         false otherwise.
     bool contains(T value) { return (count(value) != 0); }
 
-    // @brief: Returns the size of the buffer (remaining elements
-    //         that can be removed).
+    // @brief: Returns the number of elements in the buffer.
     int16_t currentSize() { return writtenSize; }
 
     // @brief: Returns the max values the buffer can store - it's max 
     //         capacity.
     int16_t capacity() { return size; }
+
+    // @brief: Returns the remaining number of indicies that can be filled.
+    int16_t remainingCapacity() { return (size - writtenSize); }
 
     // @brief: Returns true if the buffer has elements, false otherwise.
     int16_t isEmpty() { return (size == 0); }

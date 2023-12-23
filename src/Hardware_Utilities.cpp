@@ -8,50 +8,63 @@
 //// SECTION -> Computer Communication
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
+//// External ////
 ComputerCom_ &ComputerCom;
+Serial_ &COMPUTERCOM_BUS_DEFAULT = Serial;
+//// Fields ////
+Serial_ &ComputerCom_::bus = COMPUTERCOM_BUS_DEFAULT;
+int16_t ComputerCom_::timeout = COMPUTERCOM_TIMEOUT_DEFAULT;
+bool ComputerCom_::isActive = false;
 
-bool ComputerCom_::manage(COMPUTERCOM_ACTION actionID, int32_t value) {
+
+int32_t ComputerCom_::manage(COMPUTERCOM_ACTION actionID, int32_t value) {
   switch(actionID) {
-    case START: {
-      COMPUTERCOM_BUS.begin(COMPUTERCOM_BAUDRATE);
+    case COMPUTERCOM_START: {
+      bus.begin(COMPUTERCOM_BAUDRATE);
       for (int16_t i = 0; i < timeout; i++) {
-        if (COMPUTERCOM_BUS) {
+        if (bus) {
           isActive = true;      
-          return true;
+          return 1;
         }
+        delay(1);
       }
-      return false;
+      return 0;
     }
-    case SET_TIMEOUT: {
+    case COMPUTERCOM_SET_TIMEOUT: {
       if (value < COMPUTERCOM_TIMEOUT_MIN || value > COMPUTERCOM_TIMEOUT_MAX) {
-        return false;
+        return 0;
       } else {
         timeout = value;
-        COMPUTERCOM_BUS.setTimeout(value);
-        return true;
+        bus.setTimeout(value);
+        return 1;
       }
     }
-    case GET_TIMEOUT: {
-      return COMPUTERCOM_BUS.getTimeout();
+    case COMPUTERCOM_GET_TIMEOUT: {
+      return timeout;
     }
     default : { 
-      return false; 
+      return 0; 
     }
   }
 } 
-bool ComputerCom_::manage(COMPUTERCOM_ACTION actionID) { return manage(actionID, 0); }
+int32_t ComputerCom_::manage(COMPUTERCOM_ACTION actionID) { 
+  return manage(actionID, 0); 
+}
 
 
 int16_t ComputerCom_::write(Buffer<uint8_t> &sendBuffer, int16_t bytes) {
   if (!isActive) { init(); }
-  int16_t availableBytes = COMPUTERCOM_BUS.availableForWrite();
-  // Reduce num of bytes to write if not enough space in buffer.
+  int16_t availableBytes = bus.availableForWrite();
+  // Check for space in both buffers
   if (availableBytes < bytes) { 
-    bytes = availableBytes; 
+    bytes = availableBytes;
+  }
+  if (sendBuffer.currentSize() < bytes) {
+    bytes = sendBuffer.currentSize();
   }
   // Send the bytes to the computer.
   for (int16_t i = 0; i < bytes && i < COMPUTERCOM_BUFFER_SIZE; i++) {
-    COMPUTERCOM_BUS.write(sendBuffer.remove());
+    bus.write(sendBuffer.remove());
   }
   return bytes;
 }
@@ -59,14 +72,17 @@ int16_t ComputerCom_::write(Buffer<uint8_t> &sendBuffer, int16_t bytes) {
 
 bool ComputerCom_::read(Buffer<uint8_t> &recieveBuffer, int16_t bytes) {
   if (!isActive) { init(); }
-  int16_t availableBytes = COMPUTERCOM_BUS.available();
+  int16_t availableBytes = bus.available();
   // Are there enough bytes available to read?
   if (availableBytes < bytes) {
     bytes = availableBytes;
   }
+  if (recieveBuffer.remainingCapacity() < bytes) {
+    bytes = recieveBuffer.remainingCapacity();
+  }
   // Read in bytes to the buffer
   for (int i = 0; i < bytes; i++) {
-    recieveBuffer.add(COMPUTERCOM_BUS.read());
+    recieveBuffer.add(bus.read());
   }
   return bytes;
 }
@@ -75,57 +91,89 @@ bool ComputerCom_::read(Buffer<uint8_t> &recieveBuffer, int16_t bytes) {
 //// SECTION -> I2C Bus
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
+TwoWire &I2C_DEFAULT_BUS = Wire;
+
 I2CBus::I2CBus(TwoWire &bus) {
   this->bus = bus;
 }
 
-bool I2CBus::manage(I2CBUS_ACTION actionID, int32_t value) {
+
+int32_t I2CBus::manage(I2CBUS_ACTION actionID, int32_t value) {
   switch(actionID) {
-    case START: {
+    case I2C_START: {
       if (!isActive) {
         bus.begin();
         bus.setClock(clockSpeed);
+        #if defined(WIRE_HAS_TIMEOUT)
+          bus.setTimeout(timeout);
+        #endif
         isActive = true;
       }
-      return true;
+      return 1;
     }
-    case STOP: {
+    case I2C_STOP: {
       if (isActive) {
         bus.end();
         isActive = false;
       }
-      return true;
+      return 1;
     }
-    case RESET: {
+    case I2C_RESET: {
       if (isActive) {
         bus.end();
-        isActive = false;
       }
       bus.begin();
+      isActive = true;
       // Should we reset settings?
       if (value == 0) {
         clockSpeed = I2C_DEFAULT_CLOCK_SPEED;
-      }
+        timeout = I2C_DEFAULT_TIMEOUT;
+      } // Else = do nothing...
       bus.setClock(clockSpeed);
-      return true;
+      #if defined(WIRE_HAS_TIMEOUT)
+        bus.setTimeout(timeout);
+      #endif
+      return 1;
     }
-    case SET_CLOCK_SPEED: {
+    case I2C_SET_CLOCK_SPEED: {
       if (value < I2C_MIN_CLOCK_SPEED || value > I2C_MAX_CLOCK_SPEED) {
-        return false;
+        return 0;
       } else {
         clockSpeed = value;
-        bus.setClock(clockSpeed);
-        return true;
+        if (isActive) {
+          bus.setClock(clockSpeed);
+        }
+        return 1;
       }
     }
-    case GET_CLOCK_SPEED: {
+    case I2C_GET_CLOCK_SPEED: {
       return clockSpeed;
     }
+    case I2C_SET_TIMEOUT: {
+      if (value < I2C_MIN_TIMEOUT || value > I2C_MAX_TIMEOUT) {
+        return 0;
+      } else {
+        timeout = value;
+        #if defined(WIRE_HAS_TIMEOUT)
+          if (isActive) {
+            bus.setTimeout(timeout);
+          }
+        #endif
+        return 1;
+      }
+    }
+    case I2C_GET_TIMEOUT: {
+      return timeout;
+    }
     default: { // If ID is invalid...
-      return false;
+      return 0;
     }
   }
 }
+int32_t I2CBus::manage(I2CBUS_ACTION actionID) {
+  return manage(actionID, 0);
+}
+
 
 // TO DO -> Add bit modes -> 8/16/32 & MSB/LSB first/last/only
 int16_t I2CBus::write(uint8_t *writeArray, int16_t bytes, uint8_t deviceAddress, 
@@ -143,7 +191,7 @@ int16_t I2CBus::write(uint8_t *writeArray, int16_t bytes, uint8_t deviceAddress,
   for (int16_t i = 0; i < bytes && i < I2C_BUFFER_SIZE; i++) {
     bus.write(writeArray[i]);
   }
-  int16_t transmissionResult = bus.endTransmission() // Send bytes.
+  int16_t transmissionResult = bus.endTransmission(); // Send bytes.
   if (transmissionResult == 0) {
     return bytes;
   } else {
@@ -154,7 +202,7 @@ int16_t I2CBus::write(uint8_t *writeArray, int16_t bytes, uint8_t deviceAddress,
 
 
 // TO DO -> Add bit modes -> 8/16/32 & MSB/LSB first/last/only
-int16_t I2CBUS::read(uint8_t *readArray, int16_t bytes, uint8_t deviceAddress,
+int16_t I2CBus::read(uint8_t *readArray, int16_t bytes, uint8_t deviceAddress,
   uint8_t registerAddress) {
   if (!isActive || readArray == NULL || bytes < 0) {
     return -6;
@@ -180,7 +228,8 @@ int16_t I2CBUS::read(uint8_t *readArray, int16_t bytes, uint8_t deviceAddress,
   }
 }
 
-int16_t I2CBUS::scan(uint8_t *addressArray, uint16_t arraySize) {
+
+int16_t I2CBus::scan(uint8_t *addressArray, int16_t arraySize) {
   if (addressArray == NULL || arraySize < 0) {
     return -1;
   }
