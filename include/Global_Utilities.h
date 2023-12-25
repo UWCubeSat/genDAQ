@@ -3,20 +3,86 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
-#include "Arduino.h"
+#include <Arduino.h>
 
 #define divCeiling(x, y) (!!x + ((x - !!x) / y))
 
 template<typename T> class MemoryPool;
 template<typename T> class Node;
 template<typename T> class LinkedList;
+struct Request;
+struct Error;
+
+typedef void (*handlerFunc)(Request*);  // Ptr to request handler function
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//// SECTION -> Request Object
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+const int16_t REQ_PARAM_COUNT = 4;
+const int16_t REQ_PARAM_ARRAY_BYTES = REQ_PARAM_COUNT;
+
+
+enum REQ_TYPE : uint8_t {
+  REQ_NULL = 0,
+  REQ_I2C_WRITE = 1
+};
+
+struct Request {
+    REQ_TYPE type = REQ_NULL;
+    uint8_t id = 0;
+    handlerFunc handler = nullptr;
+    uint8_t params[REQ_PARAM_COUNT] = { 0 };
+    uint8_t *data; 
+
+
+    // #Default Constructor
+    Request() {}
+
+    // #Constructor
+    // @brief: Sets the properties of the request.
+    Request(REQ_TYPE, uint8_t, handlerFunc, int16_t[REQ_PARAM_COUNT]);
+
+    // @brief: Resets all fields.
+    void clear();
+};
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//// SECTION -> Error Object
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+#define FUNC __FUNCTION__
+
+enum ERROR_TYPE {
+  ERROR_NONE,
+  ERROR_PROG_INVALID_REQ
+};
+
+struct Error {
+  private:
+    ERROR_TYPE type = ERROR_NONE;
+    char *funcName = nullptr;
+    bool isError = false;
+
+  public:
+    Error() {}
+    Error(ERROR_TYPE, char* = nullptr);
+
+    void update(ERROR_TYPE type, char* funcName = nullptr);
+
+    operator bool() const { return isError; }
+    bool operator == (const bool statement) { return statement == isError; }
+};
+
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 //// SECTION -> Memory Pool
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Max number of ELEMENTS that can be in a memeory pool, regardless of size.
-const int16_t MEMORY_POOL_MAX_SIZE = 512; 
+const int16_t MEMORY_POOL_MAX_SIZE = 1024; 
 
 template<typename T> class MemoryPool {
   private:
@@ -175,7 +241,7 @@ template<typename T> class MemoryPool {
 
 // Max "nodes" (values) in linked list.
 const int16_t LINKEDLIST_MAX_SIZE = 256;
-
+// Percent change of size when linked list resizes (+1 / 100)
 const int16_t LINKEDLIST_DYNAMIC_SIZING_MULTIPLIER = 50;
 
 // @brief: Represents a single index in the linked list.
@@ -225,6 +291,7 @@ template<typename T> class LinkedList {
     Node<T> *recentNode = nullptr; //For automatic iteration.
 
     MemoryPool<Node<T>> *pool; 
+    int16_t maxPoolSize; // Maximum mem pool size.
     bool autoSizing = false; // If true -> List automatically requests more capacity from pool when full.
     int16_t deltaSize = 0; // Change in size from original requested capacity.
 
@@ -232,10 +299,17 @@ template<typename T> class LinkedList {
     // #constructor
     // @brief: Assigns max size to associated setting.
     // @param numIndicies -> initial capacity of linked list.
+    //            maxSize -> Max nodes that the memory pool can allocate.
     //         autoSizing -> If true capacity will auto increase when filled.
     // @NOTE: autoSizing will never decrease capacity, only increase it...
-    LinkedList(int16_t numIndicies, bool autoSizing) : pool(new MemoryPool<Node<T>>(numIndicies)) {
-      if (numIndicies > LINKEDLIST_MAX_SIZE) { numIndicies = LINKEDLIST_MAX_SIZE; }
+    LinkedList(int16_t initSize, int16_t maxSize = LINKEDLIST_MAX_SIZE, bool autoSizing = true) {
+      if (initSize > LINKEDLIST_MAX_SIZE) { initSize = LINKEDLIST_MAX_SIZE; }
+      if (autoSizing || maxSize <= 0 || maxSize > MEMORY_POOL_MAX_SIZE) {
+        maxPoolSize = MEMORY_POOL_MAX_SIZE;
+      } else {
+        maxPoolSize = maxSize;
+      }
+      pool = new MemoryPool<Node<T>>(initSize);
       this->autoSizing = autoSizing;
     }
 
@@ -253,17 +327,19 @@ template<typename T> class LinkedList {
     // @breif: Insert value at index (non-overriding)
     // @param: value -> element to add. 
     //         index -> index of new element
-    // @note: If index is equal to size of list, element will be added to end.
-    bool add(T value, int16_t index) {      
+    // @return: This method returns itself so that add calls
+    //          can be chained together -> myList.add(x).add(y)...
+    // @note: If index is equal to size of list, element will be 
+    //        added to the end of the list.
+    LinkedList<T> &add(T value, int16_t index) {      
       if ((currentSize + 1 > LINKEDLIST_MAX_SIZE) || 
         (!autoSizing && currentSize >= pool->hasRemaining())) { 
-        return false; 
+        // !TO DO! -> Add Assert?
       } else if (index > currentSize || index < 0) { 
         index = currentSize; 
       }
-
       createNode(value, index);
-      return true;
+      return *this;
     }
 
     // #overload
@@ -649,8 +725,10 @@ template<typename T> class Buffer {
     }
 
     // @brief: Adds the specified value to the buffer.
+    // @return: This method returns itself so that add calls
+    //          can be chained together -> myBuff.add(x).add(y)...
     // @NOTE: If the buffer is full, elements will be overwritten.
-    void add(T value) {
+    Buffer<T> &add(T value) {
       dataArray[writeIndex] = value;
       // Have we lapped the read head?
       if (writeIndex == readIndex) {
@@ -667,34 +745,61 @@ template<typename T> class Buffer {
       // Reset iterator.
       currentIndex = -1;
       writtenSize++;
+      return *this;
     }
 
     // @brief: Removes & returns the next element in the buffer (FIFO).
     // @NOTE: If there is no values in the buffer this method will return an
     //        object constructed with the default constructor.
-    T remove() {
+    T *remove() {
       if (readIndex + 1 == writeIndex) {
         return T();
       } else if (readIndex == size - 1 && writeIndex == 0) {
         return T();
       } // We have not reached end of buffer.
-      T targValue;
+      T *targValue;
       // Do we have to read the current index or the next one?
       if (readIndex == writeIndex && adjustmentFlag) {
         adjustmentFlag = false;
-        targValue = dataArray[readIndex];
+        targValue = &dataArray[readIndex];
       } else {
         readIndex++;
         if (readIndex == size) {
           readIndex = 0;
         }
-        targValue = dataArray[readIndex];
+        targValue = &dataArray[readIndex];
       }
       // Reset iterator and return...
       currentIndex = -1;
       writtenSize--;
       return targValue;
     }
+
+    // @brief: Skips over the specified number of indicies.
+    // @param: distance -> The number of indicies to skip.
+    // @return: An int denoting the ~actual~ number of indicies
+    //          skiped (if current size < specified distance).
+    int16_t jump(int16_t distance) {
+      int16_t startIndex = readIndex;
+      if (writeIndex > readIndex) {
+        // Are we attempting to jump too far?
+        if (readIndex + distance >= writeIndex) {
+          readIndex = writeIndex - 1;
+        } else { 
+          readIndex += distance;
+        }
+        return readIndex - startIndex;
+      } else {
+        // We must loop around to front of buffer.
+        distance = size - readIndex;
+        if (distance > writeIndex) {
+          readIndex = writeIndex;
+        } else {
+          readIndex += distance;
+        }
+        return ((size - startIndex) + readIndex);
+      }
+    }   
 
     // @brief: Counts the number of instances of a specific value in the buffer.
     // @param: The value to find in the buffer.
@@ -717,7 +822,7 @@ template<typename T> class Buffer {
     // @brief: Find the distance of "value" from the front of the buffer.
     // @return: An int denoting the number of indicies away the specified
     //          value is from the front of the buffer.
-    int16_t distanceTo(T value) {
+    int16_t indexOf(T value) {
       resetNext();
       int16_t absIndex = findNext(value);
       if (absIndex == -1) {

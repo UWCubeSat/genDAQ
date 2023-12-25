@@ -5,19 +5,64 @@
 #include "Hardware_Utilities.h"
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+//// SECTION -> Hardware Interface
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+HardwareInterface_ &Board;
+
+#if WIRE_INTERFACES_COUNT > 0
+  int16_t I2CBusCount = 1;
+  I2CBus I2CArray[1] = { 
+    I2CBus(Wire) 
+  };
+#elif WIRE_INTERFACES_COUNT > 1
+  int16_t I2CBusCount = 2;
+  I2CBus I2CArray[2] = { 
+    I2CBus(Wire), 
+    I2CBus(Wire1) 
+  };
+#elif WIRE_INTERFACES_COUNT > 2
+  int16_t I2CBusCount = 3;
+  I2CBus I2CArray[3] = { 
+    I2CBus(Wire), 
+    I2CBus(Wire1), 
+    I2CBus(Wire2) 
+  };
+#elif WIRE_INTERFACES_COUNT > 3
+  int16_t I2CBusCount = 4;
+  I2CBus I2CArray[4] = { 
+    I2CBus(Wire), 
+    I2CBus(Wire1), 
+    I2CBus(Wire2), 
+    I2CBus(Wire3), 
+  };
+#endif
+
+I2CBus *HardwareInterface_::I2C(int16_t busID) {
+  if (busID > I2CBusCount) { return nullptr; }
+  return &I2CArray[busID];
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 //// SECTION -> Computer Communication
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 //// External ////
 ComputerCom_ &ComputerCom;
-Serial_ &COMPUTERCOM_BUS_DEFAULT = Serial;
+
+#if defined(SERIAL_PORT_MONITOR)
+  Serial_ &COMPUTERCOM_BUS_DEFAULT = SERIAL_PORT_MONITOR;
+#else 
+  Serial_ &COMPUTERCOM_BUS_DEFAULT = Serial;
+#endif
+
 //// Fields ////
 Serial_ &ComputerCom_::bus = COMPUTERCOM_BUS_DEFAULT;
 int16_t ComputerCom_::timeout = COMPUTERCOM_TIMEOUT_DEFAULT;
 bool ComputerCom_::isActive = false;
 
 
-int32_t ComputerCom_::manage(COMPUTERCOM_ACTION actionID, int32_t value) {
+int32_t ComputerCom_::manage(COMPUTERCOM_ACTION_ID actionID, int32_t value) {
   switch(actionID) {
     case COMPUTERCOM_START: {
       bus.begin(COMPUTERCOM_BAUDRATE);
@@ -47,9 +92,6 @@ int32_t ComputerCom_::manage(COMPUTERCOM_ACTION actionID, int32_t value) {
     }
   }
 } 
-int32_t ComputerCom_::manage(COMPUTERCOM_ACTION actionID) { 
-  return manage(actionID, 0); 
-}
 
 
 int16_t ComputerCom_::write(Buffer<uint8_t> &sendBuffer, int16_t bytes) {
@@ -64,7 +106,7 @@ int16_t ComputerCom_::write(Buffer<uint8_t> &sendBuffer, int16_t bytes) {
   }
   // Send the bytes to the computer.
   for (int16_t i = 0; i < bytes && i < COMPUTERCOM_BUFFER_SIZE; i++) {
-    bus.write(sendBuffer.remove());
+    bus.write(*sendBuffer.remove());
   }
   return bytes;
 }
@@ -93,12 +135,13 @@ bool ComputerCom_::read(Buffer<uint8_t> &recieveBuffer, int16_t bytes) {
 
 TwoWire &I2C_DEFAULT_BUS = Wire;
 
+
 I2CBus::I2CBus(TwoWire &bus) {
   this->bus = bus;
 }
 
 
-int32_t I2CBus::manage(I2CBUS_ACTION actionID, int32_t value) {
+int32_t I2CBus::manage(I2CBUS_ACTION_ID actionID, int32_t value) {
   switch(actionID) {
     case I2C_START: {
       if (!isActive) {
@@ -170,12 +213,8 @@ int32_t I2CBus::manage(I2CBUS_ACTION actionID, int32_t value) {
     }
   }
 }
-int32_t I2CBus::manage(I2CBUS_ACTION actionID) {
-  return manage(actionID, 0);
-}
 
 
-// TO DO -> Add bit modes -> 8/16/32 & MSB/LSB first/last/only
 int16_t I2CBus::write(uint8_t *writeArray, int16_t bytes, uint8_t deviceAddress, 
   uint8_t registerAddress) {
   if (!isActive || writeArray == NULL || bytes < 0) {
@@ -195,13 +234,11 @@ int16_t I2CBus::write(uint8_t *writeArray, int16_t bytes, uint8_t deviceAddress,
   if (transmissionResult == 0) {
     return bytes;
   } else {
-    // TO DO -> ADD ERROR HANDLING HERE?
     return -transmissionResult;
   }
 }
 
 
-// TO DO -> Add bit modes -> 8/16/32 & MSB/LSB first/last/only
 int16_t I2CBus::read(uint8_t *readArray, int16_t bytes, uint8_t deviceAddress,
   uint8_t registerAddress) {
   if (!isActive || readArray == NULL || bytes < 0) {
@@ -252,7 +289,21 @@ int16_t I2CBus::scan(uint8_t *addressArray, int16_t arraySize) {
 }
 
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//// SECTION -> SPI Bus
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//// SECTION -> Analog Pin
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//// SECTION -> Digital Pin
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 

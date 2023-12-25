@@ -5,14 +5,45 @@
 #pragma once
 #include <Arduino.h>
 #include <Wire.h>
-#include "Global_Utilities.h"
+#include <Global_Utilities.h>
+
+class I2CBus;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-//// SECTION -> Board
+//// SECTION -> Hardware Interface
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-// To do -> controlling board? - Getting ram usage, reset ect...
-class Board {
+
+class HardwareInterface_ {
+  private:
+    static I2CBus I2CArray[];
+    static int16_t I2CBusCount;
+
+  public:
+    I2CBus *I2C(int16_t);
+
+  private:
+    HardwareInterface_();
+};
+extern HardwareInterface_ &Board;
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//// SECTION -> Chip
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+enum CPU_PROPERTY_ID {
+  BOARD_TYPE,
+  BOARD_UNIQUE_ID,
+  BOARD_FREE_RAM,
+  BOARD_TOTAL_RAM,
+  BOARD_CPU_TEMP
+};
+
+class CPU { // TO DO...
   public: 
+    bool startWatchdog(int16_t);
+    bool stopWatchdog();
+
+    int32_t getProperty(CPU_PROPERTY_ID);
 
   private:
 };
@@ -28,7 +59,7 @@ const int16_t COMPUTERCOM_TIMEOUT_DEFAULT = 1000;
 const int16_t COMPUTERCOM_TIMEOUT_MAX = 10000;
 const int16_t COMPUTERCOM_TIMEOUT_MIN = 100;
 
-enum COMPUTERCOM_ACTION {
+enum COMPUTERCOM_ACTION_ID {
   COMPUTERCOM_START,
   COMPUTERCOM_SET_TIMEOUT,
   COMPUTERCOM_GET_TIMEOUT
@@ -36,7 +67,7 @@ enum COMPUTERCOM_ACTION {
 
 class ComputerCom_ {
   private:
-    //// Properties ////
+    //// Fields ////
     static Serial_ &bus;
     static int16_t timeout;
     static bool isActive;
@@ -49,8 +80,7 @@ class ComputerCom_ {
     //                 if applicable, if not don't specify value.
     // @return: Action's associated value or 1 if successful,
     //          & 0 otherwise.
-    int32_t manage(COMPUTERCOM_ACTION, int32_t);
-    int32_t manage(COMPUTERCOM_ACTION);
+    int32_t manage(COMPUTERCOM_ACTION_ID, int32_t = 0);
 
     // @brief: Sends bytes from the buffer to the computer.
     // @param: Buffer -> Contains the bytes to be sent.
@@ -85,7 +115,7 @@ const int16_t I2C_DEFAULT_TIMEOUT = 1000; // Is there a defininition for this?
 const int16_t I2C_MIN_TIMEOUT = 100;
 const int16_t I2C_MAX_TIMEOUT = 10000;
 
-enum I2CBUS_ACTION {
+enum I2CBUS_ACTION_ID {
   I2C_START,
   I2C_STOP,
   I2C_RESET,
@@ -97,7 +127,7 @@ enum I2CBUS_ACTION {
 
 class I2CBus {
   private:
-    //// Properties ////
+    //// Fields ////
     TwoWire &bus = I2C_DEFAULT_BUS;
     bool isActive = false;
     int32_t clockSpeed = I2C_DEFAULT_CLOCK_SPEED;
@@ -116,14 +146,30 @@ class I2CBus {
     //                 it is applicable, if not leave blank.
     // @return: Action's associated value or 1 if successful,
     //          & 0 otherwise.
-    int32_t manage(I2CBUS_ACTION, int32_t);
-    int32_t manage(I2CBUS_ACTION);
+    int32_t manage(I2CBUS_ACTION_ID, int32_t = 0);
 
-    // @brief: Writes bytes to a specific register.
+    // @brief: Writes bytes to a device's register.
+    // @param: 1 -> Array of bytes to write to register.
+    //         2 -> # of bytes to write (less/equal to array size).
+    //         3 -> I2C bus address of device.
+    //         4 -> Address of register to write to.
+    // @return: Positive # -> Number of bytes that were written.
+    //          Negative # -> Error code (no bytes written).
     int16_t write(uint8_t*, int16_t, uint8_t, uint8_t); // TO DO -> Add different bit modes -> MSB LSB
 
+    // @brief: Reads in bytes from a device's register.
+    // @param: 1 -> Array to store read bytes.
+    //         2 -> # of bytes to read (less/equal to array size).
+    //         3 -> I2C address of ~device~.
+    //         4 -> Address of ~register~ to read from.
+    // @return: Positive # -> Number of bytes that were read.
+    //          Negative # -> Error code (no bytes read).
     int16_t read(uint8_t*, int16_t, uint8_t, uint8_t); // TO DO -> Add different bit modes -> MSB LSB
 
+    // @brief: Scans I2C bus for device addresses.
+    // @param: 1 -> Array of bytes to store device addresses.
+    //         2 -> Size of array (max # of addresses).
+    // @return: Number of addresses found/saved to array.
     int16_t scan(uint8_t*, int16_t);
 
   private:
