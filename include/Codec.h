@@ -1,44 +1,34 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-//// SECTION -> Pre-Processor & Forward Declarations
+//// SECTION -> Pre-Processor 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 #include <Arduino.h>
-#include <Global_Utilities.h>
-#include <Communication_Protocol.h>
-
+#include <Containers.h>
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-//// SECTION -> Request Decoder 
+//// SECTION -> Communication Protocol Defines
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-class RequestDecoder {
-  private:
-    Buffer<uint8_t> &requestBuffer;
+#define FLAG_SEPERATOR 0
+#define TAG_I2C_WRITE 1
+#define TAG_I2C_READ 2
+#define TAG_I2C_SCAN 3
 
-  public:
-    void decodeRequests(Buffer<uint8_t>& requestBuffer);
+#define NUM_0 100
+#define NUM_1 101
+#define NUM_2 102 
+#define NUM_3 103 
+//tbd...
 
-  private:
-};
+#define CHAR_A 200
+#define CHAR_B 201
+#define CHAR_C 202
+#define CHAR_D 203 
+//tbd...
 
+#define FLAG_RESPONSE 254
+#define FLAG_REQUEST 255
 
-///////////////////////////////////////////////////////////////////////////////////////////////////
-//// SECTION -> Response Encoder 
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-const int16_t RESPONSE_MAX_SIZE = 16;
-
-class ResponseEncoder {
-  private:
-    Buffer<uint8_t> &responseBuffer;
-    Request &req;
-
-  public:
-    ResponseEncoder &begin(Request &req);
-
-    ResponseEncoder &end();
-
-};
 
 

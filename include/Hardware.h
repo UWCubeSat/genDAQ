@@ -5,7 +5,9 @@
 #pragma once
 #include <Arduino.h>
 #include <Wire.h>
-#include <Global_Utilities.h>
+#include <SPI.h>
+#include <Containers.h>
+#include <GlobalDefs.h>
 
 class I2CBus;
 
@@ -187,6 +189,8 @@ class SerialBus {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 //// SECTION -> SPI Bus
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+
+extern SPIClass SPI_DEFAULT_BUS;
 
 class SPIBus {
 

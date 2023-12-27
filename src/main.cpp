@@ -3,9 +3,9 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #include <Arduino.h>
-#include <Global_Utilities.h>
-#include <Request_System.h>
-#include <Communication_Utilities.h> 
+#include <Containers.h>
+#include <RequestSys.h>
+#include <Communication.h> 
 
 const int16_t REQUEST_MAX_SIZE = 256;
 const int16_t RESPONSE_MAX_SIZE = 512;

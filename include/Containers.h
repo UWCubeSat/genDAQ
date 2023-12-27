@@ -4,78 +4,13 @@
 
 #pragma once
 #include <Arduino.h>
+#include <GlobalDefs.h>
 
 #define divCeiling(x, y) (!!x + ((x - !!x) / y))
 
 template<typename T> class MemoryPool;
 template<typename T> class Node;
 template<typename T> class LinkedList;
-struct Request;
-struct Error;
-
-typedef void (*handlerFunc)(Request*);  // Ptr to request handler function
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-//// SECTION -> Request Object
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-const int16_t REQ_PARAM_COUNT = 4;
-const int16_t REQ_PARAM_ARRAY_BYTES = REQ_PARAM_COUNT;
-
-
-enum REQ_TYPE : uint8_t {
-  REQ_NULL = 0,
-  REQ_I2C_WRITE = 1
-};
-
-struct Request {
-    REQ_TYPE type = REQ_NULL;
-    uint8_t id = 0;
-    handlerFunc handler = nullptr;
-    uint8_t params[REQ_PARAM_COUNT] = { 0 };
-    uint8_t *data; 
-
-
-    // #Default Constructor
-    Request() {}
-
-    // #Constructor
-    // @brief: Sets the properties of the request.
-    Request(REQ_TYPE, uint8_t, handlerFunc, int16_t[REQ_PARAM_COUNT]);
-
-    // @brief: Resets all fields.
-    void clear();
-};
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-//// SECTION -> Error Object
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-#define FUNC __FUNCTION__
-
-enum ERROR_TYPE {
-  ERROR_NONE,
-  ERROR_PROG_INVALID_REQ
-};
-
-struct Error {
-  private:
-    ERROR_TYPE type = ERROR_NONE;
-    char *funcName = nullptr;
-    bool isError = false;
-
-  public:
-    Error() {}
-    Error(ERROR_TYPE, char* = nullptr);
-
-    void update(ERROR_TYPE type, char* funcName = nullptr);
-
-    operator bool() const { return isError; }
-    bool operator == (const bool statement) { return statement == isError; }
-};
-
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 //// SECTION -> Memory Pool
@@ -748,14 +683,14 @@ template<typename T> class Buffer {
       return *this;
     }
 
-    // @brief: Removes & returns the next element in the buffer (FIFO).
+    // @brief: Removes & returns pointer to the next element in the buffer (FIFO).
     // @NOTE: If there is no values in the buffer this method will return an
     //        object constructed with the default constructor.
     T *remove() {
       if (readIndex + 1 == writeIndex) {
-        return T();
+        return nullptr;
       } else if (readIndex == size - 1 && writeIndex == 0) {
-        return T();
+        return nullptr;
       } // We have not reached end of buffer.
       T *targValue;
       // Do we have to read the current index or the next one?
@@ -775,31 +710,91 @@ template<typename T> class Buffer {
       return targValue;
     }
 
-    // @brief: Skips over the specified number of indicies.
-    // @param: distance -> The number of indicies to skip.
-    // @return: An int denoting the ~actual~ number of indicies
-    //          skiped (if current size < specified distance).
-    int16_t jump(int16_t distance) {
-      int16_t startIndex = readIndex;
-      if (writeIndex > readIndex) {
-        // Are we attempting to jump too far?
-        if (readIndex + distance >= writeIndex) {
-          readIndex = writeIndex - 1;
-        } else { 
-          readIndex += distance;
-        }
-        return readIndex - startIndex;
+    // #Overload 
+    // @brief: Returns copy of value at front of buffer.
+    T remove() {
+      T *result = remove();
+      if (result == nullptr) {
+        return T();
       } else {
-        // We must loop around to front of buffer.
-        distance = size - readIndex;
-        if (distance > writeIndex) {
-          readIndex = writeIndex;
-        } else {
-          readIndex += distance;
-        }
-        return ((size - startIndex) + readIndex);
+        return *result;
       }
+    }
+
+    // @brief: Skips over the specified number of indicies.
+    // @param: distance -> Number of indicies to skip ahead by.
+    // @return: An int denoting the size of the buffer after
+    //          the "read head" has been advanced.
+    int16_t advance(int16_t distance) {
+      if (distance < 0) { return -1; }
+      if (writeIndex > readIndex) {
+        if (readIndex + distance >= writeIndex) {              ///////////// NEEDS TO BE TESTED
+          readIndex = writeIndex - 1;
+          writtenSize = 0;
+          return 0;
+        } else {
+          goto standardIncrement;
+        }
+      } else { 
+        // Do we need to loop around to front of buffer?
+        if (readIndex + distance >= size) {
+          distance -= (size - readIndex);
+          if (distance >= writeIndex) {
+            readIndex = writeIndex - 1;
+            writtenSize = 0;
+            return 0;
+          } else {
+            readIndex += distane;
+          }
+        } else { // We dont need to loop around
+          goto standardIncrement;
+        }
+      }
+      standardIncrement:
+        readIndex += distance;
+        writtenSize -= distance;
+        return writtenSize;
     }   
+
+    // @brief: Rewinds the buffer by the specified number
+    //         of indicies.
+    // @param: distance -> Number of indicies to go back.
+    // @return: An int denoting the size of the buffer after
+    //          the "read head" has retreated.
+    int16_t retreat(int16_t distance) {
+      if (distance < 0) { return -1; }
+      if (writeIndex > readIndex) {
+        // Do we need to wrap around to end of buffer?
+        if (readIndex - distance <= 0) {
+          distance -= distance -  readIndex;
+          // Are we attempting to go past write head?
+          if (readIndex - distance <= writeIndex) {             ///////////// NEEDS TO BE TESTED
+            readIndex = writeIndex;
+            writtenSize = size;
+            return size;
+          } else {
+            goto standardDecrement;
+          }
+        } else {
+          standardDecrement;
+        }
+      } else { // The write head is behind the read head.
+        // Are we attempting to go past write head?
+        if (readIndex - distance <= writeIndex) {
+          readIndex = writeIndex;
+          writtenSize = size;
+          return size;
+        } else { // no we are not...
+          standardDecrement;
+        }
+      }
+      standardDecrement:
+        readIndex -= distance;
+        writtenSize += distance;
+        return writtenSize;
+    }
+
+
 
     // @brief: Counts the number of instances of a specific value in the buffer.
     // @param: The value to find in the buffer.
@@ -882,16 +877,13 @@ template<typename T> class Buffer {
         return -1;
       } else if (readIndex > writeIndex) {
         if (currentIndex == -1 || (currentIndex < readIndex && currentIndex > writeIndex)) {
-          Serial.println("section1");
           currentIndex = 0;
         }
         for (int16_t i = currentIndex; i < size; i++) {
           if (i < readIndex && i >= writeIndex) {
-            Serial.println("section2");
             i = readIndex;
           }
           if (dataArray[i] == value) {
-            Serial.println("section3");
             currentIndex = i + 1;
             return i;
           }

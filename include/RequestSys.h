@@ -4,9 +4,39 @@
 
 #pragma once
 #include "Arduino.h"
-#include <Global_Utilities.h>
-#include <Codec.h>
-#include <Hardware_Utilities.h>
+#include <Containers.h>
+#include <Hardware.h>
+#include <GlobalDefs.h>
+
+typedef void (*handlerFunc)(Request*);  // Ptr to request handler function
+
+enum REQ_TYPE : uint8_t {
+  REQ_NULL = 0,
+  REQ_I2C_WRITE = 1
+};
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//// SECTION -> Request Object
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+struct Request {
+    uint8_t requestType;
+    uint8_t id = 0;
+    handlerFunc handler = nullptr;
+    uint8_t *params;
+    uint8_t *data; 
+
+
+    // #Default Constructor
+    Request() {}
+
+    // #Constructor
+    // @brief: Sets the properties of the request.
+    Request(REQ_TYPE, uint8_t, handlerFunc, uint8_t);
+
+    // @brief: Resets all fields.
+    void clear();
+};
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 //// SECTION -> Request Manager
@@ -21,8 +51,8 @@ const int16_t ERROR_LIST_MAX_SIZE = 32;
 class RequestManager_ {
   private:    
     static LinkedList<Request> requestList;
-    static RequestDecoder decoder;
-    static ResponseEncoder encoder;
+    //static RequestDecoder decoder;
+    //static ResponseEncoder encoder;
 
   public:
     static Buffer<uint8_t> &requestBuffer;
@@ -41,11 +71,11 @@ class RequestManager_ {
     int16_t executeRequests();
 
     // @brief: Removes persistant request from list.
-    Error removeRequest();
+    void removeRequest();
     // @brief: Changes the property of a request.
-    Error changeProperty();
+    void changeProperty();
     // @brief: Syncs the request list with the host.
-    Error syncRequests();
+    void syncRequests();
 };
 extern RequestManager_ &RequestManager;
 
