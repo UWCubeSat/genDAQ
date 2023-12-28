@@ -6,27 +6,15 @@
 
 struct Setting;
 
-#define GLOBALSETTINGS__MAX_SETTINGS 16 // Maximum number of settings.
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//// SECTION -> Macro Utilities
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define GLOBALERRORS__MAX_ERRORS 6 // Maximum number of errors that can be stored at one time.
-#define GLOBALERRORS__ASSERT_RESET 1 // 1 = Will restart on valid assert/deny, 0 = wont restart.
-#define GLOBALERRORS__ASSERT_RESTART_DELAY 500 // Restart delay in valid asser/deny (milliseconds)
+#define THROW(typeID) ErrorSys.report(typeID, __FUNCTION__, __FILE__, __LINE__)
+#define ASSERT(statement, typeID) ErrorSys.assert(statement, typeID, __FUNCTION__, __FILE__, __LINE__)
+#define DENY(statement, typeID) ErrorSys.deny(statement, typeID, __FUNCTION__, __FILE__, __LINE__)
 
-#define BOARDCONTROLLER__ENABLE_WDT 1 // 1 = enabled, 2 = not enabled
-#define BOARDCONTROLLER__WDT_MIN_DURATION 32 // In microseconds
-#define BOARDCONTROLLER__WDT_MAX_DURATION 3600000 // In microseconds
-
-#define BOARDCONTROLLER__WDT_CLOCK_SPEED 1024 // Prescale of 32,767hz WDT clock is 1:32 -> 1024hz 
-#define BOARDCONTROLLER__WDT_DISABLE_KEY 165 // Used for clearing watchdawg timer register.
-#define BOARDCONTROLLER__WDT_LONG_DURATION_MIN 3000
-#define BOARDCONTROLLER__WDT_LONG_DURATION_CYCLES 1000
-#define BOARDCONTROLLER__WDT_LONG_DURATION_VAL 7 //Offset bit when duration > LONG DURATION MIN
-#define BOARDCONTROLLER__WDT_DEFAULT_DURATION_CYCLES 250
-#define BOARDCONTROLLER__WDT_DEFAULT_DURATION_VAL 5 //Offset bit when duration > LONG DURATION MIN
-
-#define BOARDCONTROLLER__SLEEP_DURATION_MAX 15000
-#define BOARDCONTROLLER__SLEEP_DURATION_MIN 1000
-#define BOARDCONTROLLER__SLEEP_MODE 4
+#define divCeiling(x, y) (!!x + ((x - !!x) / y))
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -130,17 +118,17 @@ bool GlobalErrors_::deny(bool statement, ERROR_ID errorType, const char *funcNam
   return !assert(!statement, errorType, funcName, fileName, lineNum);
 }
 
-ERROR_ID GlobalErrors_::getLastError() const {
+ERROR_ID GlobalErrors_::getLastError() {
   if (currentIndex == 0) { return ERROR_NONE; }
     currentIndex--;
     return (ERROR_ID)errorArray[currentIndex];
 }
 
-uint8_t GlobalErrors_::getErrorCount() const { return currentIndex; }
+uint8_t GlobalErrors_::getErrorCount() { return currentIndex; }
 
-ERROR_ID GlobalErrors_::getLastAssert() const { return (ERROR_ID)previousAssert; }
+ERROR_ID GlobalErrors_::getLastAssert() { return (ERROR_ID)previousAssert; }
 
-void GlobalErrors_::clearLastAssert() const { previousAssert = 0; }
+void GlobalErrors_::clearLastAssert() { previousAssert = 0; }
 
 void GlobalErrors_::printError(ERROR_ID errorType, const char *funcName, const char *fileName, int16_t lineNum) {
   if (!SERIAL_PORT_MONITOR) {
@@ -163,12 +151,18 @@ void GlobalErrors_::printError(ERROR_ID errorType, const char *funcName, const c
 BoardController_ &Board;
 
 bool BoardController_::wdtInitialized = false;
+bool BoardController_::itInitialized = false;
+bool BoardController_::sleepInitialized = false;
 
 volatile int16_t wdtRemainingCycles = 0;
 volatile int16_t wdtTotalCycles = 0;
-volatile int16_t wdtState = 0; // 0 = off, 1 = restart 2 = no restarts, 3 = sleep
-wdtHandler callback = nullptr;
-wdtHandler wakeCallback = nullptr;
+volatile int16_t wdtState = 0; // 0 = off, 1 = on
+volatile uint8_t sleepState = 0; // 0 not sleeping, 1 = sleeping
+volatile int16_t itState = 0; // 0 = off, 1 = one
+uint8_t itCurrentDuration = 0; // Used for reset of interrupt timer
+volatile interruptFunc wdtCallback = nullptr;
+volatile interruptFunc itCallback = nullptr;
+
 
 void BoardController_::forceRestart() {
   __disable_irq();
@@ -187,33 +181,29 @@ void clearRestartFlag() {
   restartFlag = (uint8_t)RESTART_NONE;
 }
 
-int32_t BoardController_::beginWatchdogTimer(int32_t duration, wdtHandler watchdogSubscriber = nullptr,
-  bool restartOnExpire = true) {
-    // Check for exceptions
-    if (wdtState == 3) return -1; 
+int32_t BoardController_::beginWatchdogTimer(int32_t duration, interruptFunc watchdogSubscriber = nullptr) {
+    // Check exceptions
+    if (duration > BOARDCONTROLLER__WDT_DURATION_MAX) duration = BOARDCONTROLLER__WDT_DURATION_MAX;
     if (wdtState != 0) disableWatchdogTimer();
-    // If handler function is provided set it to wdt handler.
+
+    // Add subscriber
     if (watchdogSubscriber != nullptr ) { 
-      callback = watchdogSubscriber; 
-    } else {
-      callback = nullptr;
-    }
-    if (restartOnExpire) {
-      wdtState = 1; // restarts on expire -> on
-    } else {
-      wdtState = 2; // restart on expire -> off
-    }
-    uint8_t offsetVal = 0;
-    int32_t estimateDuration = 0;
-    // Calculate timing & start WDT.
-    processDurationWDT(duration, offsetVal, estimateDuration);
-    startWDT(offsetVal + 1, offsetVal, false, -1);
-    return estimateDuration;
+      wdtCallback = watchdogSubscriber; 
+    } else wdtCallback = nullptr;
+
+    // Set mode  & calculate cycles.
+    wdtState = 1;    
+    wdtTotalCycles  = divCeiling(duration, BOARDCONTROLLER__WDT_DURATION_CYCLES);
+    wdtRemainingCycles = wdtTotalCycles;
+
+    // Start WDT & return estimate time.
+    startWDT(BOARDCONTROLLER__WDT_DURATION_VAL + 1, BOARDCONTROLLER__WDT_DURATION_VAL, false, -1);
+    return wdtTotalCycles * BOARDCONTROLLER__WDT_DURATION_CYCLES;
 }
 
 void BoardController_::restartWatchdogTimer() {
   //Restart watchdog timer.
-  WDT->CLEAR.reg = BOARDCONTROLLER__WDT_DISABLE_KEY;
+  WDT->CLEAR.reg = WDT_CLEAR_CLEAR_KEY_Val;
   while(WDT->CTRLA.reg);
   // Reset cycle counter.
   wdtRemainingCycles = wdtTotalCycles; 
@@ -229,45 +219,9 @@ void BoardController_::disableWatchdogTimer() {
   wdtTotalCycles = 0;
 }
 
-int32_t BoardController_::sleep(int32_t duration, wdtHandler wakeSubscriber) {
-  if (wdtState != 0) disableWatchdogTimer();
-  if (callback != nullptr) callback = nullptr;
-  // We will send these to duration processing method...
-  uint8_t offsetVal = 0;
-  int32_t estimateDuration = 0;
-  // Set state to 3 = sleep & start WDT
-  wdtState = 3; 
-  processDurationWDT(duration, offsetVal, estimateDuration);
-  startWDT(11, 0, true, offsetVal);
-  // Actually put board to sleep:
-  PM->SLEEPCFG.bit.SLEEPMODE = BOARDCONTROLLER__SLEEP_MODE;
-  while(PM->SLEEPCFG.bit.SLEEPMODE != BOARDCONTROLLER__SLEEP_MODE);
-
-  // CODE RESUMED HERE ON WAKE /// // <- I think this is wrong....
-
-  if (wdtState != 0) wdtState = 0;
-  wakeSubscriber();
-  return estimateDuration;
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-//// SECTION -> Board Controller -> Private Methods
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-void BoardController_::initWDT() {
-  wdtInitialized = true; // Set flag
-  OSC32KCTRL->OSCULP32K.bit.EN1K = 1;
-  OSC32KCTRL->OSCULP32K.bit.EN32K = 0;
-  // Non-m4 chips dont support dynamic priority changes.
-  if (NVIC_GetPriority(WDT_IRQn) != 0) { 
-    NVIC_DisableIRQ(WDT_IRQn);  
-    NVIC_ClearPendingIRQ(WDT_IRQn);
-  }
-  // Set up interupt.
-  NVIC_SetPriority(WDT_IRQn, 0); 
-  NVIC_EnableIRQ(WDT_IRQn);
-  // Sync
-  while (WDT->SYNCBUSY.reg);
+void BoardController_::initSleep() {
+  // Set flag
+  sleepInitialized = true;
 
   // Disable USB so we can change configs
   USB->DEVICE.CTRLA.bit.ENABLE = 0;
@@ -277,19 +231,45 @@ void BoardController_::initWDT() {
   while (USB->DEVICE.SYNCBUSY.bit.ENABLE);
 }
 
+
+
+void BoardController_::initWDT() {
+  //Set flag
+  wdtInitialized = true; 
+  
+  // Start low power clocks -> 1024hz w 1:32 prescale
+  OSC32KCTRL->OSCULP32K.bit.EN1K = 1;
+  OSC32KCTRL->OSCULP32K.bit.EN32K = 0;
+
+  // Non-m4 chips dont support dynamic priority changes.
+  if (NVIC_GetPriority(WDT_IRQn) != 0) { 
+    NVIC_DisableIRQ(WDT_IRQn);  
+    NVIC_ClearPendingIRQ(WDT_IRQn);
+  }
+
+  // Set up interupt.
+  NVIC_SetPriority(WDT_IRQn, 0); 
+  NVIC_EnableIRQ(WDT_IRQn);
+  while (WDT->SYNCBUSY.reg); // Sync
+}
+
 void BoardController_::startWDT(uint8_t timeoutVal, uint8_t offsetVal, bool enableWM,
   uint8_t closedIntervalVal = 0) {
-  if (BOARDCONTROLLER__ENABLE_WDT == 1) { // Master WDT switch.
-    // Have we initialized the WDT?
+  // check master WDT switch.
+  if (BOARDCONTROLLER__ENABLE_WDT == 1) { 
     if (!wdtInitialized) initWDT();
+
     // Disable WDT -> lets us change settings.
     WDT->CTRLA.reg = 0; 
     while (WDT->SYNCBUSY.reg);
+
     // Clear & enable warning.
     WDT->INTFLAG.bit.EW = 1; 
     WDT->INTENSET.bit.EW = 1; 
+
     //Set WDT timeout
     WDT->CONFIG.bit.PER = timeoutVal;
+
     // Window mode?
     if (enableWM) {
       WDT->CONFIG.bit.WINDOW = closedIntervalVal;
@@ -297,86 +277,189 @@ void BoardController_::startWDT(uint8_t timeoutVal, uint8_t offsetVal, bool enab
     } else{
       WDT->CTRLA.bit.WEN = 0; 
     }
+    // Set warning offset cycle duration.
     while (WDT->SYNCBUSY.reg);
     WDT->EWCTRL.bit.EWOFFSET = offsetVal;
+
     // Clear then start watchdog
-    WDT->CLEAR.reg = BOARDCONTROLLER__WDT_DISABLE_KEY;
+    WDT->CLEAR.reg = WDT_CLEAR_CLEAR_KEY_Val;
     while (WDT->CTRLA.reg);
     WDT->CTRLA.bit.ENABLE = 1;
     while (WDT->SYNCBUSY.reg);
   }
 }
 
-void BoardController_::processDurationWDT(int32_t &targDuration, uint8_t &offsetValReturn, 
-  int32_t &estimateDurationReturn) {
-  // Change functionality if sleep mode = on.
-  if (wdtState == 3) {
-    if (targDuration <= 1000) {
-      offsetValReturn = 7;
-      estimateDurationReturn = 1000;
-    } else if (targDuration <= 2000) {
-      offsetValReturn = 8;
-      estimateDurationReturn = 2000;
-    } else if (targDuration <= 4000) {
-      offsetValReturn = 9;
-      estimateDurationReturn = 4000;
-    } else if (targDuration <= 8000) {
-      offsetValReturn = 10;
-      estimateDurationReturn = 8000; 
-    } else { 
-      offsetValReturn = 11;
-      estimateDurationReturn = 16000; // -> Maximum WDT duration -> No cycling here unfortunetly.
-    }
-  } else {
-    // Check for OOB (out of bounds) -> If so correct it.
-    if (targDuration < BOARDCONTROLLER__WDT_MIN_DURATION) {
-      targDuration = BOARDCONTROLLER__WDT_MIN_DURATION;
-    } else if (targDuration > BOARDCONTROLLER__WDT_MAX_DURATION) {
-      targDuration = BOARDCONTROLLER__WDT_MAX_DURATION;
-    }
-    // Map duration onto one of clock divisiors available for WDT timer...
-    if (targDuration > BOARDCONTROLLER__WDT_LONG_DURATION_MIN) {
-      offsetValReturn = BOARDCONTROLLER__WDT_LONG_DURATION_VAL; 
-      wdtTotalCycles = divCeiling(targDuration, BOARDCONTROLLER__WDT_LONG_DURATION_CYCLES);
-      estimateDurationReturn = wdtTotalCycles * BOARDCONTROLLER__WDT_LONG_DURATION_CYCLES;
-    } else {
-      offsetValReturn = BOARDCONTROLLER__WDT_DEFAULT_DURATION_VAL;
-      wdtTotalCycles = divCeiling(targDuration, BOARDCONTROLLER__WDT_DEFAULT_DURATION_CYCLES);
-      estimateDurationReturn = wdtTotalCycles * BOARDCONTROLLER__WDT_DEFAULT_DURATION_CYCLES;
-    }
-    // Set remaining = to initial to begin.
-    wdtRemainingCycles = wdtTotalCycles;
-  } 
-}
-
+// #IRQ
 void WDT_Handler(void) {
   wdtRemainingCycles--;
   if (wdtRemainingCycles <= 0) {
-    // Reset values
-    wdtRemainingCycles = 0;
-    wdtTotalCycles = 0;
-    wdtState = 0;
-    if (callback != nullptr && wdtState != 3) callback();
-    // Do we want to initiate restart?
-    if (wdtState == 1) {
-      if (callback != nullptr) callback();
-      WDT->CLEAR.reg = BOARDCONTROLLER__WDT_DISABLE_KEY - 1; // NOTE -> May not need this?
-      while (true); 
-    } else {
-      // Disable WDT:
-      WDT->CTRLA.bit.ENABLE = 0;            
-      while (WDT->SYNCBUSY.reg);
-      // Clear iterrupt flag:
-      WDT->INTFLAG.bit.EW = 1;
-    }
+    // Initiate restart 
+    if (wdtCallback != nullptr && wdtState != 2) wdtCallback();
+    WDT->CLEAR.reg = WDT_CLEAR_CLEAR_KEY_Val - 1; 
+    while (true); 
   } else { 
-    // More cycles left -> clear flag
+    // Clear timer & cycle again 
     WDT->INTFLAG.bit.EW = 1;
-    // Reset clock
-    WDT->CLEAR.reg = BOARDCONTROLLER__WDT_DISABLE_KEY;
+    WDT->CLEAR.reg = WDT_CLEAR_CLEAR_KEY_Val;
     while(WDT->SYNCBUSY.reg);
   }
 }
+
+extern "C" char* sbrk(int incr);
+int32_t BoardController_::getFreeRam() {
+  char top;
+  return &top - reinterpret_cast<char*>(sbrk(0));
+}
+
+void BoardController_::beginInterruptTimer(int32_t duration, interruptFunc subscriber) {
+  // Set config flags
+  itCallback = subscriber;
+
+  // Enable clock & disable tc3 so config can be changed.
+  GCLK->PCHCTRL[TC3_GCLK_ID].reg = GCLK_PCHCTRL_GEN_GCLK1_Val | (1 << GCLK_PCHCTRL_CHEN_Pos);
+  while(GCLK->SYNCBUSY.reg);
+  TC3->COUNT16.CTRLA.bit.ENABLE = 0;
+
+  // Enable running while in sleep mode.
+  TC3->COUNT16.CTRLA.bit.RUNSTDBY = 1; 
+
+  // Config match mode
+  TC3->COUNT16.WAVE.bit.WAVEGEN = TC_WAVE_WAVEGEN_MFRQ;
+  while(TC3->COUNT16.SYNCBUSY.reg);
+  TC3->COUNT16.INTENSET.reg = 0;
+  TC3->COUNT16.INTENSET.bit.MC0 = 1;
+
+  //Enable interrupt
+  if (!itInitialized) { // May be able to expand this to include other components...
+    itInitialized = true;
+    NVIC_EnableIRQ(TC3_IRQn); 
+  }
+
+  // Calculate/setup prescalers -> CREDIT: DENIS-VAN-GILS on GITHUB
+  int prescaler;
+  uint32_t TC_CTRLA_PRESCALER_DIVN;
+  TC3->COUNT16.CTRLA.reg &= ~TC_CTRLA_ENABLE;
+  while(TC3->COUNT16.SYNCBUSY.reg);
+  TC3->COUNT16.CTRLA.reg &= ~TC_CTRLA_PRESCALER_DIV1024;
+  while(TC3->COUNT16.SYNCBUSY.reg);
+  TC3->COUNT16.CTRLA.reg &= ~TC_CTRLA_PRESCALER_DIV256;
+  while(TC3->COUNT16.SYNCBUSY.reg);
+  TC3->COUNT16.CTRLA.reg &= ~TC_CTRLA_PRESCALER_DIV64;
+  while(TC3->COUNT16.SYNCBUSY.reg);
+  TC3->COUNT16.CTRLA.reg &= ~TC_CTRLA_PRESCALER_DIV16;
+  while(TC3->COUNT16.SYNCBUSY.reg);
+  TC3->COUNT16.CTRLA.reg &= ~TC_CTRLA_PRESCALER_DIV4;
+  while(TC3->COUNT16.SYNCBUSY.reg);
+  TC3->COUNT16.CTRLA.reg &= ~TC_CTRLA_PRESCALER_DIV2;
+  while(TC3->COUNT16.SYNCBUSY.reg);
+  TC3->COUNT16.CTRLA.reg &= ~TC_CTRLA_PRESCALER_DIV1;
+  while(TC3->COUNT16.SYNCBUSY.reg);
+
+  if (duration > 300000) {
+    TC_CTRLA_PRESCALER_DIVN = TC_CTRLA_PRESCALER_DIV1024;
+    prescaler = 1024;
+  } else if (80000 < duration) {
+    TC_CTRLA_PRESCALER_DIVN = TC_CTRLA_PRESCALER_DIV256;
+    prescaler = 256;
+  } else if (20000 < duration) {
+    TC_CTRLA_PRESCALER_DIVN = TC_CTRLA_PRESCALER_DIV64;
+    prescaler = 64;
+  } else if (10000 < duration) {
+    TC_CTRLA_PRESCALER_DIVN = TC_CTRLA_PRESCALER_DIV16;
+    prescaler = 16;
+  } else if (5000 < duration) {
+    TC_CTRLA_PRESCALER_DIVN = TC_CTRLA_PRESCALER_DIV8;
+    prescaler = 8;
+  } else if (2500 < duration) {
+    TC_CTRLA_PRESCALER_DIVN = TC_CTRLA_PRESCALER_DIV4;
+    prescaler = 4;
+  } else if (1000 < duration) {
+    TC_CTRLA_PRESCALER_DIVN = TC_CTRLA_PRESCALER_DIV2;
+    prescaler = 2;
+  } else {
+    TC_CTRLA_PRESCALER_DIVN = TC_CTRLA_PRESCALER_DIV1;
+    prescaler = 1;
+  }
+  // calculate comparator -> CREDIT: DENIS VAN GILES on GITHUB
+  int compareValue = (int)(48000000 / (prescaler/((float)duration / 1000000))) - 1;
+
+  // Enable prescaler
+  TC3->COUNT16.CTRLA.reg |= TC_CTRLA_PRESCALER_DIVN;
+  while(TC3->COUNT16.SYNCBUSY.reg);
+
+  // Set comparator value 
+  TC3->COUNT16.COUNT.reg = map(TC3->COUNT16.COUNT.reg, 0, TC3->COUNT16.CC[0].reg, 0, compareValue);
+  TC3->COUNT16.CC[0].reg = compareValue;
+  while(TC3->COUNT16.SYNCBUSY.reg);
+
+  // Enable the interrup
+  TC3->COUNT16.CTRLA.bit.ENABLE = 1;
+  while(TC3->COUNT16.SYNCBUSY.reg);
+}
+
+void BoardController_::restartInterruptTimer() { beginInterruptTimer(itCurrentDuration, itCallback); }
+
+void BoardController_::disableInterruptTimer() {
+  // Disable the timer.
+  TC3->COUNT16.CTRLA.bit.ENABLE = 0;
+  while(TC3->COUNT16.SYNCBUSY.reg);
+  // Set the state variable to 0.
+  itState = 0;
+}
+
+void TC3_Handler(void) {
+  // Only one if called from timeout
+  if (TC3->COUNT16.INTFLAG.bit.MC0 == 1) {
+    TC3->COUNT16.INTFLAG.bit.MC0 = 1;
+  }
+  // Call subscriber & reset state.
+  itCallback();
+  itState = 0;
+}
+
+void BoardController_::sleep(uint8_t sleepMode, int32_t duration = 0, void (*wakeSubscriber)(bool timeoutExpire)) {
+  // Setup for sleep
+  if (duration <= 0) sleepMode = 3;
+  if (wdtState != 0) disableWatchdogTimer();
+  if (itState != 0) disableInterruptTimer();
+  if (sleepInitialized) initSleep();
+  sleepState = sleepMode;
+  
+  // Find corresponding sleep mode
+  uint8_t sleepVal = 0;
+  if (sleepMode == 1) { // IDLE sleep mode
+    sleepVal = PM_SLEEPCFG_SLEEPMODE_IDLE2_Val;
+  } else if (sleepMode == 2) { // STANDBY sleep mode
+    sleepVal = PM_SLEEPCFG_SLEEPMODE_STANDBY_Val;
+    PM->STDBYCFG.bit.FASTWKUP = 3;
+  } else { // HYBERNATE sleep mode
+    sleepVal = PM_SLEEPCFG_SLEEPMODE_HIBERNATE_Val;
+  }
+
+  // If applicable set "wakeup" interrupt
+  if ((sleepMode == 1 || sleepMode == 2) && duration > 0) {
+    beginInterruptTimer(duration, nullptr);
+  }
+  // Begin sleep
+  PM->SLEEPCFG.bit.SLEEPMODE = sleepVal;
+  while(PM->SLEEPCFG.bit.SLEEPMODE != sleepVal);
+  __DSB(); 
+  __WFI();
+
+  // Code resumed here on wake.
+  sleepState = 0;
+  if (wakeSubscriber != nullptr) {
+    wakeSubscriber(wdtState == 0);
+    wakeSubscriber = nullptr;
+  }
+}
+
+
+
+
+
+
+
 
 
 
