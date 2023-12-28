@@ -6,8 +6,6 @@
 #include <Arduino.h>
 #include <GlobalDefs.h>
 
-#define divCeiling(x, y) (!!x + ((x - !!x) / y))
-
 template<typename T> class MemoryPool;
 template<typename T> class Node;
 template<typename T> class LinkedList;

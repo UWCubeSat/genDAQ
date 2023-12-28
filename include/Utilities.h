@@ -12,6 +12,9 @@ class GlobalSettings_;
 struct Error;
 class GlobalErrors_;
 
+class BoardController_;
+void WDT_Handler(void); 
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 //// SECTION -> Program Settings
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -19,7 +22,7 @@ class GlobalErrors_;
 // #Singleton
 class GlobalSettings_ {
   private:
-    static Setting settingArray[SETTINGS_AMOUNT_MAX];
+    static Setting settingArray[GLOBALSETTINGS__MAX_SETTINGS];
     static uint8_t currentIndex;
 
   public:
@@ -54,29 +57,29 @@ uint8_t previousAssert __attribute__ ((section (".no_init")));
 // #Singleton
 class GlobalErrors_ {
   private:
-    static uint8_t errorArray[ERRORS_AMOUNT_MAX];
+    static uint8_t errorArray[GLOBALERRORS__MAX_ERRORS];
     static uint8_t currentIndex;
     static bool restartActive;
   
   public:
-    void report(ERROR_TYPE errorType, const char *funcName, const char *fileName, int16_t lineNum);
+    void report(ERROR_ID errorType, const char *funcName, const char *fileName, int16_t lineNum);
 
-    bool assert(bool statement, ERROR_TYPE errorType, const char *funcName, const char *fileName, int16_t lineNum);
+    bool assert(bool statement, ERROR_ID errorType, const char *funcName, const char *fileName, int16_t lineNum);
 
-    bool deny(bool statement, ERROR_TYPE errorType, const char *funcName, const char *fileName, int16_t lineNum);
+    bool deny(bool statement, ERROR_ID errorType, const char *funcName, const char *fileName, int16_t lineNum);
 
-    ERROR_TYPE getLastError() const;
+    ERROR_ID getLastError() const;
     
     uint8_t getErrorCount() const;
 
-    ERROR_TYPE getLastAssert() const;
+    ERROR_ID getLastAssert() const;
     
     void clearLastAssert() const;
 
   private:
     GlobalErrors_() {}
 
-    void printError(ERROR_TYPE errorType, const char *funcName, const char *fileName, int16_t lineNum);
+    void printError(ERROR_ID errorType, const char *funcName, const char *fileName, int16_t lineNum);
 };
 extern GlobalErrors_ &ErrorSys;
 
@@ -86,24 +89,43 @@ extern GlobalErrors_ &ErrorSys;
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 // This value is saved between program restarts
-uint8_t restartMsg __attribute__ ((section (".no_init"))); 
+uint8_t restartFlag __attribute__ ((section (".no_init")));
+
+// For custom WDT warning handler.
+typedef void (*wdtHandler)(void);
 
 // #Singleton
 class BoardController_ {
+  private:
+    static bool wdtInitialized;
+ 
   public:
-    // @brief: Immediatly initiates program restart.
-    // @param: reason -> Reason for the restart.
-    // @NOTE: The provided restart msg (reason) is saved through the
-    //        restart and can be read afterwards using getRestartMsg();
-    void restartProgram(BOARD_RESTART_MSG reason);
+    void forceRestart(); // DONE
 
-    // @param: durration -> Duration of sleep (seconds).
-    void sleep(int16_t durration);
+    void setRestartFlag(RESTART_FLAG_ID flag); // DONE
 
-    BOARD_RESTART_MSG getRestartMsg();
+    RESTART_FLAG_ID getRestartFlag(); // DONE
+
+    void clearRestartFlag(); // DONE
+
+    int32_t beginWatchdogTimer(int32_t duration, wdtHandler watchdogSubscriber = nullptr, bool restartOnExpire = true); // DONE
+
+    void restartWatchdogTimer(); // DONE
+
+    void disableWatchdogTimer(); // DONE
+
+    int32_t sleep(int32_t duration, wdtHandler timeoutSubscriber = nullptr);
 
   private:
     BoardController_() {}
 
+    void initWDT();
+
+    void startWDT(uint8_t timeoutVal, uint8_t offsetVal, bool enableWM, // DONE -> EXCEPT SLEEP
+      uint8_t closedIntervalVal = 0);
+
+    void processDurationWDT(int32_t &targDuration, uint8_t &offsetValReturn, //DONE
+      int32_t &estimateDurationReturn);
 };
 extern BoardController_ &Board;
+
