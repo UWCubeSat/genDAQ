@@ -1,58 +1,129 @@
-///////////////////////////////////////////////////////////////////////////////////////////////////
-//// SECTION -> Pre-Processor (Non-Defs)
-///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include <Arduino.h>
 
-#define divCeiling(x, y) (!!x + ((x - !!x) / y))
+#define DMA_MAX_CHANNELS 10
+#define DMA_MAX_DESCRIPTORS 4
 
-///////////////////////////////////////////////////////////////////////////////////////////////////
-//// SECTION -> System Properties ==>> Prefix: BRD__
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-#define SYS__TOTAL_RAM 192000
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-//// SECTION -> Global Settings ==>> Prefix: PROG__
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-#define PROG__DEBUG_MODE 1 // 1 = Debug mode -> print things, 0 = Standard mode -> dont print. 
-
-#define REQUEST_MAX_SIZE 256
-#define RESPONSE_MAX_SIZE 512
+#define DMA_DEFAULT_TRIGGER_SOURCE 0
+#define DMA_DEFAULT_TRANSMISSION_THRESHOLD 0
+#define DMA_DEFAULT_TRANSMISSION_SIZE 0
+#define DMA_DEFAULT_TRIGGER_ACTION 2
+#define DMA_DEFAULT_TRIGGER_SOURCE 0
+#define DMA_DEFAULT_PRIORITY_LEVEL 0
+#define DMA_DEFAULT_RUN_STANDBY true
 
 
-///////////////////////////////////////////////////////////////////////////////////////////////////
-//// SECTION -> Communication Protocol ==>> Prefix: PRTC__
-///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define PRTC__NONE 0
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-//// SECTION -> Enums ==>> Suffix: _ID, Preffix: Same & Related to Their System/Class. 
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-// NOTE =>> ALL ENUMS MUST END WITH _ID
-
-enum SETTING_ID : uint8_t {
-  SETTING_NONE = PRTC__NONE,
-  SETTING_TEST1,
-  SETTING_TEST2
-};
- 
-enum ERROR_ID : uint8_t {
-  ERROR_NONE = PRTC__NONE,
-  ERROR_TEST1,
-  ERROR_TEST2
+enum DMA_CHANNEL_STATUS : uint8_t {
+  DMA_STATUS_UNINITIALIZED,
+  DMA_STATUS_IDLE,
+  DMA_STATUS_SUSPENDED,
+  DMA_STATUS_BUSY,
 };
 
-enum RESTART_FLAG_ID : uint8_t {
-  RESTART_NONE = PRTC__NONE,
-  RESTART_TEST1,
-  RESTART_TEST2
+enum DMA_CHANNEL_ERROR : uint8_t {
+  DMA_DESCRIPTOR_ERROR,
+  DMA_CRC_ERROR,
+  DMA_BUS_ERROR
 };
 
+enum DMA_TRIGGER_SOURCE : uint8_t {
+  SOFTWARE = 0,
+  RTC_TIMESTAMP = 1,
+  DSU_DCC0 = 2,
+  DSU_DCC1 = 3,
+  SERCOM0_RX = 4,
+  SERCOM0_TX = 5,
+  SERCOM1_RX = 6,
+  SERCOM1_TX = 7,
+  SERCOM2_RX = 8,
+  SERCOM2_TX = 9,
+  SERCOM3_RX = 10,
+  SERCOM3_TX = 11,
+  SERCOM4_RX = 12,
+  SERCOM4_TX = 13,
+  SERCOM5_RX = 14,
+  SERCOM5_TX = 15,
+  SERCOM6_RX = 16,
+  SERCOM6_TX = 17,
+  SERCOM7_RX = 18,
+  SERCOM7_TX = 19,
+  CAN0_DEBUG_REQ = 20,
+  CAN1_DEBUG_REQ = 21,
+  TCC0_OOB = 22,
+  TCC0_COMPARE_0 = 23,
+  TCC0_COMPARE_1 = 24,
+  TCC0_COMPARE_2 = 25,
+  TCC0_COMPARE_3 = 26,
+  TCC0_COMPARE_4 = 27,
+  TCC0_COMPARE_5 = 28,
+  TCC1_OOB = 29,
+  TCC1_COMPARE_0 = 30,
+  TCC1_COMPARE_1 = 31,
+  TCC1_COMPARE_2 = 32,
+  TCC1_COMPARE_3 = 33,
+  TCC2_OOB = 34,
+  TCC2_COMPARE_0 = 35,
+  TCC2_COMPARE_1 = 36,
+  TCC2_COMPARE_2 = 37,
+  TCC3_OOB = 38,
+  TCC3_COMPARE_0 = 39,
+  TCC3_COMPARE_1 = 40,
+  TCC4_OOB = 41,
+  TCC4_COMPARE_0 = 42,
+  TCC4_COMPARE_1 = 43,
+  TC0_OOB = 44,
+  TC0_COMPARE_0 = 45,
+  TC0_COMPARE_1 = 46,
+  TC1_OOB = 47,
+  TC1_COMPARE_0 = 48,
+  TC1_COMPARE_1 = 49,
+  TC2_OOB = 50,
+  TC2_COMPARE_0 = 51,
+  TC2_COMPARE_1 = 52,
+  TC3_OOB = 53,
+  TC3_COMPARE_0 = 54,
+  TC3_COMPARE_1 = 55,
+  TC4_OOB = 56,
+  TC4_COMPARE_0 = 57,
+  TC4_COMPARE_1 = 58,
+  TC5_OOB = 59,
+  TC5_COMPARE_0 = 60,
+  TC5_COMPARE_1 = 61,
+  TC6_OOB = 62,
+  TC6_COMPARE_0 = 63,
+  TC6_COMPARE_1 = 64,
+  TC7_OOB = 65,
+  TC7_COMPARE_0 = 66,
+  TC7_COMPARE_1 = 67,
+  ADC0_RESRDY = 68,
+  ADC0_SEQ = 69,
+  ADC1_RESRDY = 70,
+  ADC1_SEQ = 71,
+  DAC_EMPTY0 = 72,
+  DAC_EMPTY1 = 73,
+  DAC_RESULT_READY0 = 74,
+  DAC_RESULT_READY1 = 75,
+  I2S_RX0 = 76,
+  I2S_RX1 = 77,
+  I2S_TX0 = 78,
+  I2S_TX1 = 79,
+  PCC_RX = 80,
+  AES_WRITE = 81,
+  AES_READ = 82,
+  QSPI_RX = 83,
+  QSPI_TX = 84
+};
 
+enum DMA_TRIGGER_ACTION : uint8_t {
+  BLOCK_TRANSFER,
+  BURST_TRANSFER,
+  BEAT_TRANSFER
+};
 
+enum DMA_PRIORITY_LEVEL : uint8_t {
+  LOW_PRIORITY = 0,
+  MEDIUM_PRIORITY = 1,
+  HIGH_PRIORITY = 2,
+  HIGHEST_PRIORITY = 3
+};
