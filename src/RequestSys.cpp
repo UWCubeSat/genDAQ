@@ -4,6 +4,25 @@
 
 #include "RequestSys.h"
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+//// SECTION -> Request Object
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+Request::Request(REQ_TYPE type, uint8_t id, reqHandler handler, uint8_t *data, uint8_t *params) {
+  this->requestType = requestType;
+  this->id = id;
+  this->handler = handler;
+  this->data = data;
+  this->params = params;
+}
+
+void Request::clear() {
+  this->requestType = REQ_NULL;
+  this->id = -1; 
+  this->handler = nullptr;
+  this->data = nullptr;
+  this->params = nullptr;
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 //// SECTION -> Request Manager Class
@@ -25,7 +44,7 @@ void RequestManager_::cycle() {
 }
 
 
-handlerFunc RequestManager_::linkRequest(REQ_TYPE type) {
+reqHandler RequestManager_::linkRequest(REQ_TYPE type) {
   return nullptr;
 }
 

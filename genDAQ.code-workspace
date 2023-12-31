@@ -5,8 +5,9 @@
 		}
 	],
 	"settings": {
-		"files.associations": {
+		"files.associations": {			
 			"cstddef": "cpp"
-		}
+		},
+		"editor.indentSize": 8			
 	}
 }

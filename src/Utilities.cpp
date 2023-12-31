@@ -7,45 +7,29 @@
 struct Setting;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-//// SECTION -> Macro Utilities
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-#define THROW(typeID) ErrorSys.report(typeID, __FUNCTION__, __FILE__, __LINE__)
-#define ASSERT(statement, typeID) ErrorSys.assert(statement, typeID, __FUNCTION__, __FILE__, __LINE__)
-#define DENY(statement, typeID) ErrorSys.deny(statement, typeID, __FUNCTION__, __FILE__, __LINE__)
-
-#define divCeiling(x, y) (!!x + ((x - !!x) / y))
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
 //// SECTION -> Setting
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 GlobalSettings_ &SettingSys;
 
-Setting GlobalSettings_::settingArray[GLOBALSETTINGS__MAX_SETTINGS];
-uint8_t GlobalSettings_::currentIndex = 0;
+int16_t GlobalSettings_::currentIndex = 0;
+Setting *GlobalSettings_::settingArray = nullptr;
+int16_t GlobalSettings_::settingArraySize = 0;
 
-struct Setting {
-  SETTING_ID id = SETTING_NONE;
-  int16_t value = 0;  
+void GlobalSettings_::init(Setting *settings, int16_t size) {
+  settingArray = settings;
+  settingArraySize = size;
 };
 
 const int16_t &GlobalSettings_::operator [] (const SETTING_ID settingID) {
   return getSetting(settingID);
 }
 
-const int16_t &GlobalSettings_::declareSetting(SETTING_ID id, int16_t initialValue) {
-  settingArray[currentIndex].id = id;
-  settingArray[currentIndex].value = initialValue;
-  currentIndex++;
-  return settingArray[currentIndex].value;
-}
-
+const int16_t nullSetting = 0;
 const int16_t &GlobalSettings_::getSetting(SETTING_ID settingID) {
   Setting *targSetting = findSetting(settingID);
   if (targSetting == nullptr) {
-    return 0;
+    return nullSetting;
   } else {
     return targSetting->value;
   }
@@ -62,12 +46,16 @@ const bool GlobalSettings_::setSetting(const SETTING_ID settingID, int16_t newVa
 }
 
 Setting *GlobalSettings_::findSetting(const SETTING_ID targID) {
-  for (int16_t i = 0; i < currentIndex; i++) {
-    if (settingArray[i].id == targID) {
-      return &settingArray[i];
+  if (settingArray == nullptr) {
+    return nullptr;
+  } else {
+    for (int16_t i = 0; i < currentIndex; i++) {
+      if (settingArray[i].id == targID) {
+        return &settingArray[i];
+      }
     }
+    return nullptr;
   }
-  return nullptr;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -76,11 +64,15 @@ Setting *GlobalSettings_::findSetting(const SETTING_ID targID) {
 
 GlobalErrors_ &ErrorSys;
 
+// This value is saved between program restarts
+uint8_t previousAssert __attribute__ ((section (".no_init"))); 
+
 uint8_t GlobalErrors_::errorArray[GLOBALERRORS__MAX_ERRORS];
 uint8_t GlobalErrors_::currentIndex = 0;
 bool GlobalErrors_::restartActive = false;
 
-void GlobalErrors_::report(ERROR_ID errorType, const char *funcName, const char *fileName, int16_t lineNum) {
+void GlobalErrors_::report(ERROR_ID errorType, const char *funcName, 
+  const char *fileName, int16_t lineNum) {
   if (errorType == 0) { return; }
   // We print errors when in debug mode.
   if (PROG__DEBUG_MODE == 1) {
@@ -98,7 +90,8 @@ void GlobalErrors_::report(ERROR_ID errorType, const char *funcName, const char 
   }
 }
 
-bool GlobalErrors_::assert(bool statement, ERROR_ID errorType, const char *funcName, const char *fileName, int16_t lineNum) {
+bool GlobalErrors_::assert(bool statement, ERROR_ID errorType, const char *funcName, 
+  const char *fileName, int16_t lineNum) {
   if (!statement && !restartActive) {
     if (PROG__DEBUG_MODE == 1) {
       printError(errorType, funcName, fileName, lineNum);
@@ -107,13 +100,14 @@ bool GlobalErrors_::assert(bool statement, ERROR_ID errorType, const char *funcN
     // Do we want to reset on false assert?
     if (GLOBALERRORS__ASSERT_RESET == 1) {
       restartActive = true;
-      Board.forceRestart();
+      System.forceRestart();
     }
   }
   return statement; 
 }
 
-bool GlobalErrors_::deny(bool statement, ERROR_ID errorType, const char *funcName, const char *fileName, int16_t lineNum) {
+bool GlobalErrors_::deny(bool statement, ERROR_ID errorType, const char *funcName, 
+  const char *fileName, int16_t lineNum) {
   // Invert bools so we restart on statement = true ~AND~ return true.
   return !assert(!statement, errorType, funcName, fileName, lineNum);
 }
@@ -130,50 +124,57 @@ ERROR_ID GlobalErrors_::getLastAssert() { return (ERROR_ID)previousAssert; }
 
 void GlobalErrors_::clearLastAssert() { previousAssert = 0; }
 
-void GlobalErrors_::printError(ERROR_ID errorType, const char *funcName, const char *fileName, int16_t lineNum) {
-  if (!SERIAL_PORT_MONITOR) {
-    SERIAL_PORT_MONITOR.begin(0); 
-    uint8_t timeoutCount;
-    // Wait until serial starts.
-    while(!SERIAL_PORT_MONITOR) {
-      delay(1);
-    }
+void GlobalErrors_::printError(ERROR_ID errorType, const char *funcName, 
+  const char *fileName, int16_t lineNum) {
+  if (SERIAL_PORT_MONITOR) {
+    // Print string to serial monitor.
+    SERIAL_PORT_MONITOR.print("ERROR -> {Error: " + (String)(uint8_t)errorType + "}, {Function: "
+      + (String)funcName + "}, {File: " + (String)fileName + "}, {Line: " + (String)lineNum + "}");
   }
-  // Print string to serial monitor.
-  SERIAL_PORT_MONITOR.print("ERROR -> {Error: " + (String)(uint8_t)errorType + "}, {Function: "
-    + (String)funcName + "}, {File: " + (String)fileName + "}, {Line: " + (String)lineNum + "}");
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-//// SECTION -> Board Controller -> Public Methods
+//// SECTION -> Board Controller 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-BoardController_ &Board;
+SystemController_ &System;
 
-bool BoardController_::wdtInitialized = false;
-bool BoardController_::itInitialized = false;
-bool BoardController_::sleepInitialized = false;
+// This value is saved between program restarts
+uint8_t restartFlag = 0;
+
+bool SystemController_::wdtInitialized = false;
+bool SystemController_::itInitialized = false;
+bool SystemController_::sleepInitialized = false;
 
 volatile int16_t wdtRemainingCycles = 0;
 volatile int16_t wdtTotalCycles = 0;
 volatile int16_t wdtState = 0; // 0 = off, 1 = on
-volatile uint8_t sleepState = 0; // 0 not sleeping, 1 = sleeping
+volatile uint8_t sleepState = 0; // 0 not sleeping, 1 = light sleep, 2 = normal sleep, 3 = deep sleep
 volatile int16_t itState = 0; // 0 = off, 1 = one
 uint8_t itCurrentDuration = 0; // Used for reset of interrupt timer
-volatile interruptFunc wdtCallback = nullptr;
-volatile interruptFunc itCallback = nullptr;
+volatile voidFuncPtr wdtCallback = nullptr;
+volatile voidFuncPtr itCallback = nullptr;
 
 
-void BoardController_::forceRestart() {
+void SystemController_::forceRestart() {
   __disable_irq();
   NVIC_SystemReset();
 }
 
-void BoardController_::setRestartFlag(RESTART_FLAG_ID flag) {
+
+/*
+// CONSIDER ADDING:
+void softRestart() {
+  void (*reboot)() = 0x0000 ;
+  (*reboot)();
+}
+*/
+
+void SystemController_::setRestartFlag(RESTART_FLAG_ID flag) {
   restartFlag = (uint8_t)flag;
 }
 
-RESTART_FLAG_ID BoardController_::getRestartFlag() {
+RESTART_FLAG_ID SystemController_::getRestartFlag() {
   return (RESTART_FLAG_ID)restartFlag;
 }
 
@@ -181,7 +182,8 @@ void clearRestartFlag() {
   restartFlag = (uint8_t)RESTART_NONE;
 }
 
-int32_t BoardController_::beginWatchdogTimer(int32_t duration, interruptFunc watchdogSubscriber = nullptr) {
+int32_t SystemController_::beginWatchdogTimer(int32_t duration, 
+  voidFuncPtr watchdogSubscriber) {
     // Check exceptions
     if (duration > BOARDCONTROLLER__WDT_DURATION_MAX) duration = BOARDCONTROLLER__WDT_DURATION_MAX;
     if (wdtState != 0) disableWatchdogTimer();
@@ -201,25 +203,27 @@ int32_t BoardController_::beginWatchdogTimer(int32_t duration, interruptFunc wat
     return wdtTotalCycles * BOARDCONTROLLER__WDT_DURATION_CYCLES;
 }
 
-void BoardController_::restartWatchdogTimer() {
+void SystemController_::restartWatchdogTimer() {
   //Restart watchdog timer.
   WDT->CLEAR.reg = WDT_CLEAR_CLEAR_KEY_Val;
   while(WDT->CTRLA.reg);
+
   // Reset cycle counter.
   wdtRemainingCycles = wdtTotalCycles; 
 }
 
-void BoardController_::disableWatchdogTimer() { 
+void SystemController_::disableWatchdogTimer() { 
   // Disable watchdog timer.
   WDT->CTRLA.bit.ENABLE = 0;
   while(WDT->SYNCBUSY.reg);
+
   // Reset fields.
   wdtState = 0;
   wdtRemainingCycles = 0;
   wdtTotalCycles = 0;
 }
 
-void BoardController_::initSleep() {
+void SystemController_::initSleep() {
   // Set flag
   sleepInitialized = true;
 
@@ -231,9 +235,7 @@ void BoardController_::initSleep() {
   while (USB->DEVICE.SYNCBUSY.bit.ENABLE);
 }
 
-
-
-void BoardController_::initWDT() {
+void SystemController_::initWDT() {
   //Set flag
   wdtInitialized = true; 
   
@@ -253,8 +255,8 @@ void BoardController_::initWDT() {
   while (WDT->SYNCBUSY.reg); // Sync
 }
 
-void BoardController_::startWDT(uint8_t timeoutVal, uint8_t offsetVal, bool enableWM,
-  uint8_t closedIntervalVal = 0) {
+void SystemController_::startWDT(uint8_t timeoutVal, uint8_t offsetVal, bool enableWM,
+  uint8_t closedIntervalVal) {
   // check master WDT switch.
   if (BOARDCONTROLLER__ENABLE_WDT == 1) { 
     if (!wdtInitialized) initWDT();
@@ -296,9 +298,9 @@ void WDT_Handler(void) {
     // Initiate restart 
     if (wdtCallback != nullptr && wdtState != 2) wdtCallback();
     WDT->CLEAR.reg = WDT_CLEAR_CLEAR_KEY_Val - 1; 
-    while (true); 
+    while (true);   
   } else { 
-    // Clear timer & cycle again 
+    // Clear timer & cycle again    
     WDT->INTFLAG.bit.EW = 1;
     WDT->CLEAR.reg = WDT_CLEAR_CLEAR_KEY_Val;
     while(WDT->SYNCBUSY.reg);
@@ -306,17 +308,18 @@ void WDT_Handler(void) {
 }
 
 extern "C" char* sbrk(int incr);
-int32_t BoardController_::getFreeRam() {
+int32_t SystemController_::getFreeRam() {
   char top;
   return &top - reinterpret_cast<char*>(sbrk(0));
 }
 
-void BoardController_::beginInterruptTimer(int32_t duration, interruptFunc subscriber) {
+void SystemController_::beginInterruptTimer(int32_t duration, voidFuncPtr subscriber) {
   // Set config flags
   itCallback = subscriber;
 
   // Enable clock & disable tc3 so config can be changed.
-  GCLK->PCHCTRL[TC3_GCLK_ID].reg = GCLK_PCHCTRL_GEN_GCLK1_Val | (1 << GCLK_PCHCTRL_CHEN_Pos);
+  GCLK->PCHCTRL[TC3_GCLK_ID].reg = GCLK_PCHCTRL_GEN_GCLK1_Val 
+                                   | (1 << GCLK_PCHCTRL_CHEN_Pos);
   while(GCLK->SYNCBUSY.reg);
   TC3->COUNT16.CTRLA.bit.ENABLE = 0;
 
@@ -332,6 +335,7 @@ void BoardController_::beginInterruptTimer(int32_t duration, interruptFunc subsc
   //Enable interrupt
   if (!itInitialized) { // May be able to expand this to include other components...
     itInitialized = true;
+    NVIC_SetPriority(TC3_IRQn, 1);
     NVIC_EnableIRQ(TC3_IRQn); 
   }
 
@@ -381,14 +385,16 @@ void BoardController_::beginInterruptTimer(int32_t duration, interruptFunc subsc
     prescaler = 1;
   }
   // calculate comparator -> CREDIT: DENIS VAN GILES on GITHUB
-  int compareValue = (int)(48000000 / (prescaler/((float)duration / 1000000))) - 1;
+  int compareValue = (int)(BOARDCONTROLLER__SLEEP_CLOCK_HZ / 
+    (prescaler/((float)duration / 1000000))) - 1;
 
   // Enable prescaler
   TC3->COUNT16.CTRLA.reg |= TC_CTRLA_PRESCALER_DIVN;
   while(TC3->COUNT16.SYNCBUSY.reg);
 
   // Set comparator value 
-  TC3->COUNT16.COUNT.reg = map(TC3->COUNT16.COUNT.reg, 0, TC3->COUNT16.CC[0].reg, 0, compareValue);
+  TC3->COUNT16.COUNT.reg = map(TC3->COUNT16.COUNT.reg, 0, 
+                               TC3->COUNT16.CC[0].reg, 0, compareValue);
   TC3->COUNT16.CC[0].reg = compareValue;
   while(TC3->COUNT16.SYNCBUSY.reg);
 
@@ -397,9 +403,11 @@ void BoardController_::beginInterruptTimer(int32_t duration, interruptFunc subsc
   while(TC3->COUNT16.SYNCBUSY.reg);
 }
 
-void BoardController_::restartInterruptTimer() { beginInterruptTimer(itCurrentDuration, itCallback); }
+void SystemController_::restartInterruptTimer() { 
+  beginInterruptTimer(itCurrentDuration, itCallback); 
+}
 
-void BoardController_::disableInterruptTimer() {
+void SystemController_::disableInterruptTimer() {
   // Disable the timer.
   TC3->COUNT16.CTRLA.bit.ENABLE = 0;
   while(TC3->COUNT16.SYNCBUSY.reg);
@@ -417,7 +425,8 @@ void TC3_Handler(void) {
   itState = 0;
 }
 
-void BoardController_::sleep(uint8_t sleepMode, int32_t duration = 0, void (*wakeSubscriber)(bool timeoutExpire)) {
+void SystemController_::sleep(uint8_t sleepMode, int32_t duration, 
+  void (*wakeSubscriber)(bool onTimeout)) {
   // Setup for sleep
   if (duration <= 0) sleepMode = 3;
   if (wdtState != 0) disableWatchdogTimer();
@@ -427,12 +436,14 @@ void BoardController_::sleep(uint8_t sleepMode, int32_t duration = 0, void (*wak
   
   // Find corresponding sleep mode
   uint8_t sleepVal = 0;
-  if (sleepMode == 1) { // IDLE sleep mode
+  if (sleepMode == 1) {                             
     sleepVal = PM_SLEEPCFG_SLEEPMODE_IDLE2_Val;
-  } else if (sleepMode == 2) { // STANDBY sleep mode
+
+  } else if (sleepMode == 2) {                      
     sleepVal = PM_SLEEPCFG_SLEEPMODE_STANDBY_Val;
     PM->STDBYCFG.bit.FASTWKUP = 3;
-  } else { // HYBERNATE sleep mode
+
+  } else {                                          
     sleepVal = PM_SLEEPCFG_SLEEPMODE_HIBERNATE_Val;
   }
 

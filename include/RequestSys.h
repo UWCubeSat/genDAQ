@@ -8,7 +8,11 @@
 #include <Hardware.h>
 #include <GlobalDefs.h>
 
-typedef void (*handlerFunc)(Request*);  // Ptr to request handler function
+#define REQ_PARAM_ARRAY_BYTES 64
+
+struct Request;
+
+typedef void (*reqHandler)(Request*);  // Ptr to request handler function
 
 enum REQ_TYPE : uint8_t {
   REQ_NULL = 0,
@@ -22,7 +26,7 @@ enum REQ_TYPE : uint8_t {
 struct Request {
     uint8_t requestType;
     uint8_t id = 0;
-    handlerFunc handler = nullptr;
+    reqHandler handler = nullptr;
     uint8_t *params;
     uint8_t *data; 
 
@@ -32,7 +36,7 @@ struct Request {
 
     // #Constructor
     // @brief: Sets the properties of the request.
-    Request(REQ_TYPE, uint8_t, handlerFunc, uint8_t);
+    Request(REQ_TYPE, uint8_t, reqHandler, uint8_t*, uint8_t*);
 
     // @brief: Resets all fields.
     void clear();
@@ -66,7 +70,7 @@ class RequestManager_ {
     RequestManager_() {}
 
     // @brief: Links request to handler.
-    handlerFunc linkRequest(REQ_TYPE);
+    reqHandler linkRequest(REQ_TYPE);
     // @breif: "Executes" all requests in the request list.
     int16_t executeRequests();
 

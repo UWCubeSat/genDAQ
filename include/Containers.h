@@ -638,22 +638,23 @@ const int16_t BUFFER_TIMEOUT = 2048;
 //             -> Searching through buffer (cannot be done -> only beggining/end can be accessed).
 //             -> Is not able to dynamically resize.
 template<typename T> class Buffer {
-  private:
-    T *dataArray = nullptr; // Array that stores the buffer's data -> allocated on stack.
-    int16_t size = 0; // Total capacity of the buffer's data array.
-    int16_t writtenSize = 0; // Number of written to elements in the buffer.
-    int16_t readIndex = 0; // Index of last read element.
-    int16_t writeIndex = 1; // Index of next written element.
+  public:
+    T *dataArray = nullptr;     // Array that stores the buffer's data -> allocated on stack.
+    int16_t totalSize = 0;      // Total capacity of the buffer's data array.
+    int16_t writtenSize = 0;    // Number of written to elements in the buffer.
+    int16_t readIndex = 0;      // Index of last read element. -> Is set to total size on init.
+    int16_t writeIndex = 0;     // Index of next written element.
     bool adjustmentFlag = true; // Ensures all elements are read when read-head is lapped by write head.
 
-  public:
+  //public:
     // #Constructor
     // @brief: Sets up the Buffer.
     // @param: *dataArray -> Ptr to the array that will store buffer's values.
     //               size -> The size of the passed array (& therefore buffer).
     Buffer(T *dataArray, int16_t size) {
-        this->size = size;
+        this->totalSize = size;
         this->dataArray = dataArray;
+        this->readIndex = size - 1;
         clear();
     }
 
@@ -667,17 +668,20 @@ template<typename T> class Buffer {
       if (writeIndex == readIndex) {
         adjustmentFlag = true;
         readIndex++;
-        if (readIndex == size) {
+        if (readIndex == totalSize) {
           readIndex = 0;
         }
       } // No - so move along...
       writeIndex++;
-      if (writeIndex == size) {
+      if (writeIndex == totalSize) {
         writeIndex = 0;
+      }
+      // Increment written size if no overwrite:
+      if (writtenSize < totalSize) {
+        writtenSize++;
       }
       // Reset iterator.
       currentIndex = -1;
-      writtenSize++;
       return *this;
     }
 
@@ -687,7 +691,7 @@ template<typename T> class Buffer {
     T *remove() {
       if (readIndex + 1 == writeIndex) {
         return nullptr;
-      } else if (readIndex == size - 1 && writeIndex == 0) {
+      } else if (readIndex == totalSize - 1 && writeIndex == 0) {
         return nullptr;
       } // We have not reached end of buffer.
       T *targValue;
@@ -697,7 +701,7 @@ template<typename T> class Buffer {
         targValue = &dataArray[readIndex];
       } else {
         readIndex++;
-        if (readIndex == size) {
+        if (readIndex == totalSize) {
           readIndex = 0;
         }
         targValue = &dataArray[readIndex];
@@ -708,25 +712,15 @@ template<typename T> class Buffer {
       return targValue;
     }
 
-    // #Overload 
-    // @brief: Returns copy of value at front of buffer.
-    T remove() {
-      T *result = remove();
-      if (result == nullptr) {
-        return T();
-      } else {
-        return *result;
-      }
-    }
-
     // @brief: Skips over the specified number of indicies.
     // @param: distance -> Number of indicies to skip ahead by.
     // @return: An int denoting the size of the buffer after
     //          the "read head" has been advanced.
     int16_t advance(int16_t distance) {
+      int16_t originalDistance = distance;
       if (distance < 0) { return -1; }
       if (writeIndex > readIndex) {
-        if (readIndex + distance >= writeIndex) {              ///////////// NEEDS TO BE TESTED
+        if (readIndex + distance >= writeIndex) {              
           readIndex = writeIndex - 1;
           writtenSize = 0;
           return 0;
@@ -735,14 +729,16 @@ template<typename T> class Buffer {
         }
       } else { 
         // Do we need to loop around to front of buffer?
-        if (readIndex + distance >= size) {
-          distance -= (size - readIndex);
+        if (readIndex + distance >= totalSize) {
+          distance -= (totalSize - readIndex);
           if (distance >= writeIndex) {
             readIndex = writeIndex - 1;
             writtenSize = 0;
             return 0;
           } else {
-            readIndex += distane;
+            readIndex = distance;
+            writtenSize -= originalDistance;
+            return writtenSize;
           }
         } else { // We dont need to loop around
           goto standardIncrement;
@@ -759,31 +755,34 @@ template<typename T> class Buffer {
     // @param: distance -> Number of indicies to go back.
     // @return: An int denoting the size of the buffer after
     //          the "read head" has retreated.
-    int16_t retreat(int16_t distance) {
+    int16_t rewind(int16_t distance) {
+      int16_t originalDistance = distance;
       if (distance < 0) { return -1; }
       if (writeIndex > readIndex) {
         // Do we need to wrap around to end of buffer?
         if (readIndex - distance <= 0) {
-          distance -= distance -  readIndex;
+          distance -= readIndex;
           // Are we attempting to go past write head?
-          if (readIndex - distance <= writeIndex) {             ///////////// NEEDS TO BE TESTED
+          if (totalSize - distance <= writeIndex) {            
             readIndex = writeIndex;
-            writtenSize = size;
-            return size;
+            writtenSize = totalSize;
+            return totalSize;
           } else {
-            goto standardDecrement;
+            readIndex = totalSize - distance;
+            writtenSize += originalDistance;
+            return writtenSize;
           }
         } else {
-          standardDecrement;
+          goto standardDecrement;
         }
       } else { // The write head is behind the read head.
         // Are we attempting to go past write head?
         if (readIndex - distance <= writeIndex) {
           readIndex = writeIndex;
-          writtenSize = size;
-          return size;
+          writtenSize = totalSize;
+          return totalSize;
         } else { // no we are not...
-          standardDecrement;
+          goto standardDecrement;
         }
       }
       standardDecrement:
@@ -823,7 +822,7 @@ template<typename T> class Buffer {
       } else if (absIndex > readIndex) {
         return absIndex - readIndex;
       } else {
-        return ((size - readIndex) + absIndex);
+        return ((totalSize - readIndex) + absIndex);
       }
     }
 
@@ -832,23 +831,23 @@ template<typename T> class Buffer {
     bool contains(T value) { return (count(value) != 0); }
 
     // @brief: Returns the number of elements in the buffer.
-    int16_t currentSize() { return writtenSize; }
+    int16_t size() { return writtenSize; }
 
     // @brief: Returns the max values the buffer can store - it's max 
     //         capacity.
-    int16_t capacity() { return size; }
+    int16_t capacity() { return totalSize; }
 
     // @brief: Returns the remaining number of indicies that can be filled.
-    int16_t remainingCapacity() { return (size - writtenSize); }
+    int16_t remainingCapacity() { return (totalSize - writtenSize); }
 
     // @brief: Returns true if the buffer has elements, false otherwise.
-    int16_t isEmpty() { return (size == 0); }
+    int16_t isEmpty() { return (totalSize == 0); }
 
     // @brief: Empties out the buffer removing all added values.
     // @NOTE: This does not delete the buffer! Elements can still
     //        be added after this method is called!
     void clear() {
-      for (int i = 0; i < size; i++) {
+      for (int i = 0; i < totalSize; i++) {
         dataArray[i] = T();
       }
     }
@@ -877,7 +876,7 @@ template<typename T> class Buffer {
         if (currentIndex == -1 || (currentIndex < readIndex && currentIndex > writeIndex)) {
           currentIndex = 0;
         }
-        for (int16_t i = currentIndex; i < size; i++) {
+        for (int16_t i = currentIndex; i < totalSize; i++) {
           if (i < readIndex && i >= writeIndex) {
             i = readIndex;
           }
@@ -892,7 +891,7 @@ template<typename T> class Buffer {
         if (currentIndex == -1) {
           currentIndex = 0;
         }
-        for (int i = currentIndex; i < size; i++) {
+        for (int i = currentIndex; i < totalSize; i++) {
           if (dataArray[i] == value) {
             currentIndex = i + 1;
             return i;

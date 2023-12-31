@@ -101,8 +101,8 @@ int16_t ComputerCom_::write(Buffer<uint8_t> &sendBuffer, int16_t bytes) {
   if (availableBytes < bytes) { 
     bytes = availableBytes;
   }
-  if (sendBuffer.currentSize() < bytes) {
-    bytes = sendBuffer.currentSize();
+  if (sendBuffer.size() < bytes) {
+    bytes = sendBuffer.size();
   }
   // Send the bytes to the computer.
   for (int16_t i = 0; i < bytes && i < COMPUTERCOM_BUFFER_SIZE; i++) {
