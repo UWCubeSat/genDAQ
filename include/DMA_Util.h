@@ -5,7 +5,38 @@
 
 class DMAChannelSettings;
 class DMA_Utility;
-class DMA_Channel;
+class DMAChannel;
+
+///////////////////////////////////////////////////////////////////////////////////
+
+struct DMAChannelTask {
+  friend DMAChannel;
+
+  protected:
+    int16_t taskID; 
+    __attribute__((__aligned__(16))) DmacDescriptor taskDescriptor;
+
+  public:
+    // TO DO.
+
+};
+
+///////////////////////////////////////////////////////////////////////////////////
+
+class DMAChannelSettings {
+  friend DMAChannel;
+
+  protected:
+    void (*callbackFunction)(DMA_INTERRUPT_SOURCE, DMAChannel*) = nullptr;
+    uint32_t CHCTRLA_mask = 0;
+    int16_t priorityLevel = 0;
+    int16_t defaultCycles = 0;
+    // DOES NOT INCLUDE -> TRIGGER SOURCE (EXTERNAL)
+
+  public:
+    // TO DO.
+    
+};
 
 ///////////////////////////////////////////////////////////////////////////////////
 
@@ -13,18 +44,21 @@ class DMA_Utility {
   private:
     static bool begun;
     static int16_t channelCount;
-    static DMA_Channel channelArray[DMA_MAX_CHANNELS];
+    static DMAChannel channelArray[DMA_MAX_CHANNELS];
 
   public:
     
 
-    void begin();
+    bool begin();
 
-    void end();
+    bool end();
 
-    DMA_Channel &getChannel(uint8_t channelNumber);
+    DMAChannel &getChannel(const int16_t channelIndex);
+
+    DMAChannel &operator[](const int16_t channelIndex);
+
     /*
-    void end();
+
 
     void getSystemSettings();
 
@@ -38,85 +72,63 @@ extern DMA_Utility &DMA;
 
 ///////////////////////////////////////////////////////////////////////////////////
 
-struct DMAChannelTask {
-  friend DMA_Channel;
-
-  protected:
-    uint8_t taskNumber;
-    uint8_t stepSize;
-    uint8_t stepSelection;
-    uint8_t destinationIncrement;
-    uint8_t sourceIncrement;
-    uint8_t beatSize;
-    uint8_t blockTransferCount;
-    uint8_t transferSourceAddress;
-    uint8_t transferDestinationAddress;    
-
-  public:
-    // TO DO.
-
-};
-
-///////////////////////////////////////////////////////////////////////////////////
-
-class DMAChannelSettings {
-  friend DMA_Channel;
-
-  protected:
-    void (*callbackFunction)(DMA_Channel*);
-    uint8_t beatSize;
-    uint8_t burstSize;
-    uint8_t transferThreshold;
-    uint8_t triggerAction;
-    uint8_t triggerSource;
-    uint8_t runStandby;
-    uint8_t priorityLevel;
-
-  public:
-    // TO DO.
-    
-};
-
-///////////////////////////////////////////////////////////////////////////////////
-
-class DMA_Channel { 
+class DMAChannel { 
   friend DMA_Utility;
 
   private:
-    const uint8_t channelNumber;
-    bool initialized = false;
-    volatile DMA_CHANNEL_STATUS channelStatus = DMA_STATUS_UNINITIALIZED;
-    DMAChannelSettings *settings;
-    DMAChannelTask *tasks[DMA_MAX_DESCRIPTORS];
+    volatile bool initialized = false; // For getStatus();
+    volatile bool paused = false;
+
+    volatile bool pauseFlag = false;
+    volatile bool swTriggerFlag = false;
+    volatile bool activeFlag = false;
+
+    const int16_t channelIndex = 0;
+    int16_t currentDescriptorCount = 0;
+    int16_t remainingCycles = 0;
+    int16_t defaultCycles = 0;
+    int16_t externalTriggerCycles = 0;
+    volatile DMA_CHANNEL_ERROR channelError = CHANNEL_ERROR_NONE;
+    void (*callbackFunction)(DMA_INTERRUPT_SOURCE, DMAChannel*);
 
   public:
-    DMA_Channel(const uint8_t channelNumber);
+    DMAChannel(const int16_t channelNumber);
     
-    bool begin(DMAChannelSettings *settings);
+    bool init(DMAChannelSettings &settings);
 
-    bool end();
+    bool exit();
 
-    bool addTask(DMAChannelTask *channelTask);
+    bool updateSettings(DMAChannelSettings &Settings); // NOT DONE
 
-    /*
-    void removeTask();
+    bool setTasks(DMAChannelTask **tasks, int16_t numTasks);
+    bool setTask(DMAChannelTask *task) { return setTasks(&task, 1); }
 
-    void clearTasks();
+    bool addTask(DMAChannelTask *task); // NOT DONE
 
-    void startTasks();
+    bool removeTask(int16_t taskIndex);
 
-    void stopTasks();
+    bool clearTasks();
 
-    void getSettings();
+    bool start(int16_t cycles = -1);
 
-    void changeSettings();
+    bool stop();
 
-    void getStatus();
+    bool pause();
 
-    void getErrors();
-    */
+    bool setExternalTrigger(DMA_TRIGGER_SOURCE source, DMA_TRIGGER_ACTION action);
+
+    bool removeExternalTrigger();
+
+    DMA_CHANNEL_STATUS getStatus();
+    bool isBusy() { return getStatus() == 4; } 
+
+    DMA_CHANNEL_ERROR getError();
+
 
   protected:
 
-    void updateStatus();
+    void resetFields();
+
+    DmacDescriptor *createDescriptor(const DmacDescriptor *referenceDescriptor);
+
 };

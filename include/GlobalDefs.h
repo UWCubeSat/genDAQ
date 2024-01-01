@@ -1,34 +1,61 @@
 
+#pragma once
 #include <Arduino.h>
 
+///////////////////////////////////////////////////////////////////////////////////
+
+#define MIN(A,B)    ({ __typeof__(A) __a = (A); __typeof__(B) __b = (B); __a < __b ? __a : __b; })
+#define MAX(A,B)    ({ __typeof__(A) __a = (A); __typeof__(B) __b = (B); __a < __b ? __b : __a; })
+
+#define CLAMP(x, low, high) ({\
+  __typeof__(x) __x = (x); \
+  __typeof__(low) __low = (low);\
+  __typeof__(high) __high = (high);\
+  __x > __high ? __high : (__x < __low ? __low : __x);\
+  })
+
+///////////////////////////////////////////////////////////////////////////////////
+
 #define DMA_MAX_CHANNELS 10
-#define DMA_MAX_DESCRIPTORS 4
+#define DMA_MAX_TASKS 4
+#define DMA_IRQ_COUNT 5
+#define DMA_PRIORITY_LVL_COUNT 4
+#define DMA_MAX_CYCLES 100
+
 
 #define DMA_DEFAULT_TRIGGER_SOURCE 0
 #define DMA_DEFAULT_TRANSMISSION_THRESHOLD 0
 #define DMA_DEFAULT_TRANSMISSION_SIZE 0
-#define DMA_DEFAULT_TRIGGER_ACTION 2
 #define DMA_DEFAULT_TRIGGER_SOURCE 0
 #define DMA_DEFAULT_PRIORITY_LEVEL 0
 #define DMA_DEFAULT_RUN_STANDBY true
 
+#define DMA_REQUIRED_TRIGGER_ACTION 2
 
+///////////////////////////////////////////////////////////////////////////////////
 
-enum DMA_CHANNEL_STATUS : uint8_t {
-  DMA_STATUS_UNINITIALIZED,
-  DMA_STATUS_IDLE,
-  DMA_STATUS_SUSPENDED,
-  DMA_STATUS_BUSY,
+enum DMA_CHANNEL_STATUS : int16_t {
+  CHANNEL_STATUS_NULL = 0,
+  CHANNEL_STATUS_IDLE,
+  CHANNEL_STATUS_PAUSED,
+  CHANNEL_STATUS_BUSY
 };
 
-enum DMA_CHANNEL_ERROR : uint8_t {
-  DMA_DESCRIPTOR_ERROR,
-  DMA_CRC_ERROR,
-  DMA_BUS_ERROR
+enum DMA_CHANNEL_ERROR : int16_t {
+  CHANNEL_ERROR_NONE,
+  CHANNEL_ERROR_DESCRIPTOR_ERROR,
+  CHANNEL_ERROR_CRC_ERROR,
+  CHANNEL_ERROR_TRANSFER_ERROR
 };
 
-enum DMA_TRIGGER_SOURCE : uint8_t {
-  SOFTWARE = 0,
+enum DMA_INTERRUPT_SOURCE : int16_t {
+  CHANNEL_SUSPEND,
+  TRANSFER_COMPLETE,
+  CHANNEL_ERROR
+};
+
+enum DMA_TRIGGER_SOURCE : int16_t {
+  NONE = 0,
   RTC_TIMESTAMP = 1,
   DSU_DCC0 = 2,
   DSU_DCC1 = 3,
@@ -115,15 +142,17 @@ enum DMA_TRIGGER_SOURCE : uint8_t {
   QSPI_TX = 84
 };
 
-enum DMA_TRIGGER_ACTION : uint8_t {
-  BLOCK_TRANSFER,
-  BURST_TRANSFER,
-  BEAT_TRANSFER
+enum DMA_TRIGGER_ACTION : int16_t {
+  TRANSFER_BLOCK,
+  TRANSFER_BURST,
+  TRANSFER_ALL
 };
 
-enum DMA_PRIORITY_LEVEL : uint8_t {
+enum DMA_PRIORITY_LEVEL : int16_t {
   LOW_PRIORITY = 0,
   MEDIUM_PRIORITY = 1,
   HIGH_PRIORITY = 2,
   HIGHEST_PRIORITY = 3
 };
+
+///////////////////////////////////////////////////////////////////////////////////
