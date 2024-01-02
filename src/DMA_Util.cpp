@@ -19,52 +19,68 @@ __attribute__((__aligned__(16))) static DmacDescriptor
 ///////////////////////////////////////////////////////////////////////////////////
 
 void DMAC_0_Handler(void) {
-  DMA_INTERRUPT_SOURCE callbackArg = SOURCE_TRANSFER_COMPLETE;
-  // Get channel that called interrupt
+  // Get interrupt source & set up variables
   DMAChannel &interruptSource = DMA[DMAC->INTPEND.bit.ID];
+  DMA_INTERRUPT_REASON callbackArg = SOURCE_UNKNOWN;
 
-  // Get reason for interrupt
-  if (DMAC->INTPEND.bit.SUSP == 1) { // Channel suspended 
-    DMAC->INTPEND.bit.SUSP = 1;      // -> clear flag
+  // Has transfer completed? 
+  if (DMAC->INTPEND.bit.TCMPL) {
+    interruptSource.remainingTasks--; 
 
-    // Is suspend due to descriptor error?
-    if (DMAC->INTPEND.bit.FERR == 1) {   
-      // Yes -> Set error status, stop channel & set cb arg                          
-      interruptSource.channelError = CHANNEL_ERROR_DESCRIPTOR_ERROR;
-      callbackArg = SOURCE_DESCRIPTOR_ERROR;
-      interruptSource.stop();
+    // Are there remaining tasks?
+    if (interruptSource.remainingTasks > 1) {
+      callbackArg = SOURCE_TASK_COMPLETE;
 
-    // Is suspend due to transfer completion?
-    } else if (!interruptSource.paused) {
-      interruptSource.remainingCycles--;
-
-      // Is there pending trigger? -> If so it is external - increment counter...
-      if (DMAC->INTPEND.bit.PEND == 1) {
-        interruptSource.remainingCycles += interruptSource.externalTriggerCycles;
-      } 
-      // Reset channel
-      DMAC->Channel[interruptSource.channelIndex].CHCTRLA.bit.ENABLE = 0;    // Dissable channel
-      while(DMAC->Channel[interruptSource.channelIndex].CHCTRLA.bit.ENABLE); // Sync
-      DMAC->Channel[interruptSource.channelIndex].CHCTRLA.bit.ENABLE = 1;    // Re-enable channel
-      DMAC->Channel[interruptSource.channelIndex].CHCTRLB.bit.CMD = 0;       // Clear suspend cmd
-
-      // Are there remaining cycles? -> If so trigger transfer & set cb arg
-      if (interruptSource.remainingCycles > 0) {
-        DMAC->SWTRIGCTRL.reg |= (1 << interruptSource.channelIndex); // Set trigger bit
-        callbackArg = SOURCE_TRANSFER_COMPLETE;
-      
-      // Else -> Set cb arg to transfer complete
+      // Is there a pending trigger? 
+      if (DMAC->INTPEND.bit.PEND) {
+        interruptSource.remainingTasks += interruptSource.externalTasks; // Yes -> Just increment
       } else {
-        callbackArg = SOURCE_TRANSFER_COMPLETE;
+        DMAC->SWTRIGCTRL.reg |= (1 << interruptSource.channelIndex); // No -> Send SW trigger
       }
-    // Else -> Suspend due to pause
+    // Else -> No remaining tasks
     } else {
-      callbackArg = SOURCE_CHANNEL_PAUSED;
+      // Is there a trigger queued?
+      if (DMAC->INTPEND.bit.PEND ) {
+        callbackArg = SOURCE_TASK_COMPLETE;
+      } else {
+        callbackArg = SOURCE_CHANNEL_FREE;
+      }
     }
-  } else if (DMAC->INTPEND.bit.) {
+  // Has channel been suspended?
+  } else if (DMAC->INTPEND.bit.SUSP) {
 
+    // Has channel been paused?
+    if (DMAC->Channel[interruptSource.channelIndex].CHCTRLB.bit.CMD 
+        = DMAC_CHCTRLB_CMD_SUSPEND) {
+      callbackArg = SOURCE_CHANNEL_PAUSED;
+    
+    // Has there been a descriptor error?
+    } else if (DMAC->INTPEND.bit.FERR){
+      callbackArg = SOURCE_DESCRIPTOR_ERROR;                         // Set callback arg
+      interruptSource.channelError = CHANNEL_ERROR_DESCRIPTOR_ERROR; // Set error
+      interruptSource.stop();                                        // Disable channel
+    } 
+  // Has there been a transfer error?
+  } else if (DMAC->INTPEND.bit.TERR) {
+
+    // Yes -> Get/Set error type & disable channel
+    if (DMAC->INTPEND.bit.CRCERR) {
+      callbackArg = SOURCE_CRC_ERROR;
+      interruptSource.channelError = CHANNEL_ERROR_CRC_ERROR;
+    } else {
+      callbackArg = SOURCE_TRANSFER_ERROR;
+      interruptSource.channelError = CHANNEL_ERROR_TRANSFER_ERROR;
+    }
+    interruptSource.stop();
   }
-
+  // If callback exists -> call it
+  if (interruptSource.callbackFunction != nullptr) {
+    interruptSource.callbackFunction(callbackArg, interruptSource);
+  }
+  // Clear all flags
+  DMAC->INTPEND.bit.TCMPL = 1; 
+  DMAC->INTPEND.bit.SUSP = 1;
+  DMAC->INTPEND.bit.TERR = 1;
 }
 
 
@@ -390,31 +406,34 @@ int16_t DMAChannel::getTaskCount() {
 }
 
 
-bool DMAChannel::start(int16_t cycles) {
-  // Handle cases -> empty, idle, paused & busy
+bool DMAChannel::start(int16_t tasks) {
+  // Handle tasks = 0
+  if (tasks == 0) {
+    tasks = getTaskCount();
+  }
+ // If no transfer descriptor -> cannot trigger
   DMA_CHANNEL_STATUS currentStatus = getStatus(); 
   if (primaryDescriptorArray[channelIndex].SRCADDR.bit.SRCADDR        
     == DMAC_SRCADDR_RESETVALUE) { 
-    // If no transfer descriptor -> cannot trigger
-    return false;
+    return false; 
 
+  // If idle -> set counter/flag & trigger channel
   } else if (currentStatus == CHANNEL_STATUS_IDLE) { 
-    //Clamp & set cycles
-    CLAMP(cycles, 1, DMA_MAX_CYCLES);
-    remainingCycles = cycles;
+    CLAMP(tasks, 1, DMA_MAX_CYCLES);
+    remainingTasks = tasks;
 
-    // Trigger transfer
     CH.CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_NOACT;   // Disable software command (pause/resume)
     DMAC->SWTRIGCTRL.reg |= (1 << channelIndex);   // Trigger channel
 
+  // If paused -> send resume command
   } else if (currentStatus == CHANNEL_STATUS_PAUSED) { 
-    // If paused -> send resume command
     CH.CHCTRLB.bit.CMD |= DMAC_CHCTRLB_CMD_RESUME; 
 
+  // If busy -> Increment remaining cycles counter
   } else if (currentStatus == CHANNEL_STATUS_BUSY){ 
-    // If busy -> Increment remaining cycles counter
-    remainingCycles += cycles;
+    remainingTasks += tasks;
 
+  // Else -> Invalid state...
   } else { 
     return false;
   }
@@ -431,13 +450,9 @@ bool DMAChannel::stop() {
   while(CH.CHCTRLA.bit.ENABLE != 0); 
   CH.CHCTRLA.bit.ENABLE = 1;
 
-  // Reset software command
+  // Reset command & counter
   CH.CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_NOACT;
-
-  // Reset flags/fields
-  remainingCycles = 0;
-  paused = false;
-
+  remainingTasks = 0;
   return true;
 }
 
@@ -455,22 +470,25 @@ bool DMAChannel::pause() {
   while(CH.CHINTENCLR.bit.SUSP);                  // Wait for sync
   CH.CHCTRLB.bit.CMD |= DMAC_CHCTRLB_CMD_SUSPEND; // Suspend transfer
   CH.CHINTENSET.bit.SUSP = 1;    
-
-  paused = true; 
   return true;
 }
 
 
 bool DMAChannel::enableExternalTrigger(DMA_TRIGGER_SOURCE source, DMA_TRIGGER_ACTION action, 
-  int16_t cycles) {
+  int16_t tasks) {
+  // Handle tasks = 0
+  if (tasks == 0) {
+    tasks = getTaskCount();
+  }
+
   // Check for exceptions
   DMA_CHANNEL_STATUS currentStatus = getStatus();
   if (currentStatus == CHANNEL_STATUS_NULL) { 
     return false;
   }
   // Clamp & set cycle count
-  CLAMP(cycles, 1, DMA_MAX_CYCLES);
-  externalTriggerCycles = cycles;
+  CLAMP(tasks, 1, DMA_MAX_CYCLES);
+  externalTasks = tasks;
   
   // Configure trigger
   CH.CHCTRLA.bit.ENABLE = 0;                        // Disable channel
@@ -502,16 +520,16 @@ bool DMAChannel::disableExternalTrigger() {
 
 
 bool DMAChannel::changeExternalTrigger(DMA_TRIGGER_SOURCE newSource, DMA_TRIGGER_ACTION newAction,
-  int16_t cycles) {
-  return enableExternalTrigger(newSource, newAction, cycles);
+  int16_t tasks) {
+  return enableExternalTrigger(newSource, newAction, tasks);
 }
 
 
 DMA_CHANNEL_STATUS DMAChannel::getStatus() {
-  if (paused = true) {
+  if (CH.CHCTRLB.bit.CMD == DMAC_CHCTRLB_CMD_SUSPEND
+  || channelError == CHANNEL_ERROR_DESCRIPTOR_ERROR) {
     return CHANNEL_STATUS_PAUSED;
-  } else if ((DMAC->BUSYCH.reg & (1 << channelIndex)) != 0      // Is transfer currently active?
-           ||(DMAC->PENDCH.reg & (1 << channelIndex) != 0 )) {  // Is transfer currently pending?
+  } else if (remainingTasks > 0 ||(DMAC->PENDCH.reg & (1 << channelIndex) != 0 )) {  
     return CHANNEL_STATUS_BUSY;
   } else if (initialized) {
     return CHANNEL_STATUS_IDLE;
@@ -521,14 +539,10 @@ DMA_CHANNEL_STATUS DMAChannel::getStatus() {
 }
 
 void DMAChannel::resetFields() {
-  // Flags //
-  initialized = false;
-  paused = false;
-
-  // Other //
-  remainingCycles = 0;
-  externalTriggerCycles = 0;
   channelError = CHANNEL_ERROR_NONE;
+  initialized = false;
+  remainingTasks = 0;
+  externalTasks = 0;
   callbackFunction = nullptr;
 }
 
