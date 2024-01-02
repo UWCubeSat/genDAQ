@@ -7,6 +7,8 @@ class DMAChannelSettings;
 class DMA_Utility;
 class DMAChannel;
 
+void DMAC_0_Handler(void);
+
 ///////////////////////////////////////////////////////////////////////////////////
 
 struct DMAChannelTask {
@@ -74,22 +76,17 @@ extern DMA_Utility &DMA;
 
 class DMAChannel { 
   friend DMA_Utility;
+  friend void DMAC_0_Handler(void);
 
-  private:
-    volatile bool initialized = false; // For getStatus();
-    volatile bool paused = false;
-
-    volatile bool pauseFlag = false;
-    volatile bool swTriggerFlag = false;
-    volatile bool activeFlag = false;
-
+  protected:
     const int16_t channelIndex = 0;
-    int16_t currentDescriptorCount = 0;
-    int16_t remainingCycles = 0;
-    int16_t defaultCycles = 0;
     int16_t externalTriggerCycles = 0;
+    void (*callbackFunction)(DMA_INTERRUPT_SOURCE, DMAChannel*) = nullptr;
+
+    volatile bool initialized = false; 
+    volatile bool paused = false;           
+    volatile int16_t remainingCycles = 0;
     volatile DMA_CHANNEL_ERROR channelError = CHANNEL_ERROR_NONE;
-    void (*callbackFunction)(DMA_INTERRUPT_SOURCE, DMAChannel*);
 
   public:
     DMAChannel(const int16_t channelNumber);
@@ -109,21 +106,24 @@ class DMAChannel {
 
     bool clearTasks();
 
+    int16_t getTaskCount();
+
     bool start(int16_t cycles = -1);
 
     bool stop();
 
     bool pause();
 
-    bool setExternalTrigger(DMA_TRIGGER_SOURCE source, DMA_TRIGGER_ACTION action);
+    bool enableExternalTrigger(DMA_TRIGGER_SOURCE source, DMA_TRIGGER_ACTION action, int16_t cycles);
 
-    bool removeExternalTrigger();
+    bool disableExternalTrigger();
+
+    bool changeExternalTrigger(DMA_TRIGGER_SOURCE newSource, DMA_TRIGGER_ACTION newAction, int16_t cycles);
 
     DMA_CHANNEL_STATUS getStatus();
     bool isBusy() { return getStatus() == 4; } 
 
     DMA_CHANNEL_ERROR getError();
-
 
   protected:
 
