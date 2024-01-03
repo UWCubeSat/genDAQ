@@ -11,16 +11,28 @@ void DMAC_0_Handler(void);
 
 ///////////////////////////////////////////////////////////////////////////////////
 
-struct DMAChannelTask {
+struct DMATask {
   friend DMAChannel;
 
   protected:
-    int16_t taskID; 
     __attribute__((__aligned__(16))) DmacDescriptor taskDescriptor;
 
   public:
-    // TO DO.
+    DMATask();
 
+    DMATask &setIncrementConfig(bool incrementDestination, bool incrementSource);
+
+    DMATask &setIncrementModifier(DMA_INCREMENT_MODIFIER modifier, DMA_TARGET target);
+
+    DMATask &setElementSize(int16_t bytes);
+
+    DMATask &setTransferAmount(int16_t elements);
+
+    DMATask &setSource(void* sourcePointer);
+
+    DMATask &setDestination(void* destinationPointer);
+
+    void resetSettings();
 };
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -30,14 +42,27 @@ class DMAChannelSettings {
 
   protected:
     void (*callbackFunction)(DMA_INTERRUPT_REASON, DMAChannel&) = nullptr;
-    uint32_t CHCTRLA_mask = 0;
+    uint32_t settingsMask = 0;
     int16_t priorityLevel = 0;
-    int16_t defaultCycles = 0;
-    // DOES NOT INCLUDE -> TRIGGER SOURCE (EXTERNAL)
 
   public:
-    // TO DO.
-    
+    DMAChannelSettings();
+
+    DMAChannelSettings &setTransferThreshold(int16_t elements);
+
+    DMAChannelSettings &setBurstSize(int16_t elements);
+
+    DMAChannelSettings &setTransferMode(DMA_TRANSFER_MODE mode);
+
+    DMAChannelSettings &setSleepConfig(bool enabledDurringSleep);
+
+    DMAChannelSettings &setPriorityLevel(DMA_PRIORITY_LEVEL priorityLevel);
+
+    DMAChannelSettings &setCallbackFunction(void (*callbackFunction)(DMA_INTERRUPT_REASON, DMAChannel&));
+
+    void removeCallbackFunction();
+
+    void resetSettings();    
 };
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -49,8 +74,6 @@ class DMA_Utility {
     static DMAChannel channelArray[DMA_MAX_CHANNELS];
 
   public:
-    
-
     bool begin();
 
     bool end();
@@ -58,14 +81,6 @@ class DMA_Utility {
     DMAChannel &getChannel(const int16_t channelIndex);
 
     DMAChannel &operator[](const int16_t channelIndex);
-
-    /*
-
-
-    void getSystemSettings();
-
-    void changeSystemSettings();
-    */
 
   protected:
     DMA_Utility() {}   
@@ -80,12 +95,11 @@ class DMAChannel {
 
   protected:
     const int16_t channelIndex = 0;
-    int16_t externalTasks = 0;
+    int16_t externalActions = 0;
     void (*callbackFunction)(DMA_INTERRUPT_REASON, DMAChannel&) = nullptr;
 
     volatile bool initialized = false; 
-    volatile bool swTriggerFlag = false;
-    volatile int16_t remainingTasks = 0;
+    volatile int16_t remainingActions = 0;
     volatile DMA_CHANNEL_ERROR channelError = CHANNEL_ERROR_NONE;
 
   public:
@@ -95,12 +109,12 @@ class DMAChannel {
 
     bool exit();
 
-    bool updateSettings(DMAChannelSettings &Settings); // NOT DONE
+    bool updateSettings(DMAChannelSettings &Settings); 
 
-    bool setTasks(DMAChannelTask **tasks, int16_t numTasks);
-    bool setTask(DMAChannelTask *task) { return setTasks(&task, 1); }
+    bool setTasks(DMATask **tasks, int16_t numTasks);
+    bool setTask(DMATask *task) { return setTasks(&task, 1); }
 
-    bool addTask(DMAChannelTask *task); // NOT DONE
+    bool addTask(DMATask *task, int16_t taskIndex); 
 
     bool removeTask(int16_t taskIndex);
 
@@ -108,17 +122,17 @@ class DMAChannel {
 
     int16_t getTaskCount();
 
-    bool start(int16_t tasks = 0);
+    bool start(int16_t actions = 0);
 
     bool stop();
 
     bool pause();
 
-    bool enableExternalTrigger(DMA_TRIGGER_SOURCE source, DMA_TRIGGER_ACTION action, int16_t tasks = 0);
+    bool enableExternalTrigger(DMA_TRIGGER_SOURCE source, int16_t actions = 0);
 
     bool disableExternalTrigger();
 
-    bool changeExternalTrigger(DMA_TRIGGER_SOURCE newSource, DMA_TRIGGER_ACTION newAction, int16_t tasks = 0);
+    bool changeExternalTrigger(DMA_TRIGGER_SOURCE newSource, int16_t actions = 0);
 
     DMA_CHANNEL_STATUS getStatus();
     bool isBusy() { return getStatus() == 4; } 
