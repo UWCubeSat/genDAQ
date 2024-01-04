@@ -12,16 +12,16 @@
   __typeof__(low) __low = (low);\
   __typeof__(high) __high = (high);\
   __x > __high ? __high : (__x < __low ? __low : __x);\
-  })
+})
 
 ///////////////////////////////////////////////////////////////////////////////////
 
 //// DMA IMPLEMENTATION SETTINGS ////
 #define DMA_MAX_CHANNELS 10
 #define DMA_MAX_TASKS 4
+#define DMA_MAX_ACTIONS 100
 #define DMA_IRQ_COUNT 5
 #define DMA_PRIORITY_LVL_COUNT 4
-#define DMA_MAX_CYCLES 100
 
 //// DMA DEFAULT CONFIGS - DESCRIPTOR ////
 #define DMA_DEFAULT_INCREMENT_MODIFIER 1            // STEP SIZE 
@@ -79,8 +79,8 @@ enum DMA_INTERRUPT_REASON : int16_t {
 };
 
 enum DMA_TRANSFER_MODE : int16_t {
-  BURST_MODE = 0,
-  BLOCK_MODE = 1
+  BLOCK_MODE = 0,
+  BURST_MODE = 2
 };
 
 enum DMA_PRIORITY_LEVEL : int16_t {

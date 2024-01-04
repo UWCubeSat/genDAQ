@@ -3,13 +3,12 @@
 #include <Arduino.h>
 #include <GlobalDefs.h>
 
-class DMAChannelSettings;
+struct DMATask;
+struct DMASettings;
 class DMA_Utility;
 class DMAChannel;
 
-void DMAC_0_Handler(void);
-
-///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 struct DMATask {
   friend DMAChannel;
@@ -35,9 +34,9 @@ struct DMATask {
     void resetSettings();
 };
 
-///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
-class DMAChannelSettings {
+struct DMASettings {
   friend DMAChannel;
 
   protected:
@@ -46,32 +45,32 @@ class DMAChannelSettings {
     int16_t priorityLevel = 0;
 
   public:
-    DMAChannelSettings();
+    DMASettings();
 
-    DMAChannelSettings &setTransferThreshold(int16_t elements);
+    DMASettings &setTransferThreshold(int16_t elements);
 
-    DMAChannelSettings &setBurstSize(int16_t elements);
+    DMASettings &setBurstSize(int16_t elements);
 
-    DMAChannelSettings &setTransferMode(DMA_TRANSFER_MODE mode);
+    DMASettings &setTransferMode(DMA_TRANSFER_MODE mode);
 
-    DMAChannelSettings &setSleepConfig(bool enabledDurringSleep);
+    DMASettings &setSleepConfig(bool enabledDurringSleep);
 
-    DMAChannelSettings &setPriorityLevel(DMA_PRIORITY_LEVEL priorityLevel);
+    DMASettings &setPriorityLevel(DMA_PRIORITY_LEVEL priorityLevel);
 
-    DMAChannelSettings &setCallbackFunction(void (*callbackFunction)(DMA_INTERRUPT_REASON, DMAChannel&));
+    DMASettings &setCallbackFunction(void (*callbackFunction)(DMA_INTERRUPT_REASON, DMAChannel&));
 
     void removeCallbackFunction();
 
     void resetSettings();    
 };
 
-///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 class DMA_Utility {
   private:
     static bool begun;
     static int16_t channelCount;
-    static DMAChannel channelArray[DMA_MAX_CHANNELS];
+    static DMAChannel channelArray[];
 
   public:
     bool begin();
@@ -87,7 +86,7 @@ class DMA_Utility {
 };
 extern DMA_Utility &DMA;
 
-///////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 class DMAChannel { 
   friend DMA_Utility;
@@ -98,6 +97,7 @@ class DMAChannel {
     int16_t externalActions = 0;
     void (*callbackFunction)(DMA_INTERRUPT_REASON, DMAChannel&) = nullptr;
 
+    volatile bool pauseFlag = false;
     volatile bool initialized = false; 
     volatile int16_t remainingActions = 0;
     volatile DMA_CHANNEL_ERROR channelError = CHANNEL_ERROR_NONE;
@@ -105,16 +105,16 @@ class DMAChannel {
   public:
     DMAChannel(const int16_t channelNumber);
     
-    bool init(DMAChannelSettings &settings);
+    bool init(DMASettings &settings);
 
     bool exit();
 
-    bool updateSettings(DMAChannelSettings &Settings); 
+    bool updateSettings(DMASettings &Settings); 
 
     bool setTasks(DMATask **tasks, int16_t numTasks);
-    bool setTask(DMATask *task) { return setTasks(&task, 1); }
+    bool setTask(DMATask *task) { return setTasks( &task, 1); }
 
-    bool addTask(DMATask *task, int16_t taskIndex); 
+    bool addTask(DMATask *task, int16_t taskIndex = 0); 
 
     bool removeTask(int16_t taskIndex);
 
@@ -122,7 +122,7 @@ class DMAChannel {
 
     int16_t getTaskCount();
 
-    bool start(int16_t actions = 0);
+    bool start(int16_t actions = 1);
 
     bool stop();
 
@@ -135,7 +135,11 @@ class DMAChannel {
     bool changeExternalTrigger(DMA_TRIGGER_SOURCE newSource, int16_t actions = 0);
 
     DMA_CHANNEL_STATUS getStatus();
-    bool isBusy() { return getStatus() == 4; } 
+    bool isBusy() { return getStatus() == 4; }
+
+    int16_t getActiveTask(); // TO DO
+
+    int16_t getRemainingTasks(); // TO DO
 
     DMA_CHANNEL_ERROR getError();
 
