@@ -188,9 +188,10 @@ void DMASettings::resetSettings() {
 void DMAC_0_Handler(void) { 
   // Get interrupt source & set up variables
   DMAChannel &interruptSource = DMA[DMAC->INTPEND.bit.ID];
-  DMA_INTERRUPT_REASON callbackArg = REASON_INVALID;
+  DMA_INTERRUPT_REASON callbackArg = REASON_UNKNOWN;
+  DMA_TRIGGER_SOURCE interruptTrigger = TRIGGER_SOFTWARE;
 
-  // Has there been a transfer error? -> Get cause
+  // Has there been a transfer error? -> Get type & set flag
   if (DMAC->INTPEND.bit.TERR) {
     if (DMAC->INTPEND.bit.CRCERR) {                           
       callbackArg = REASON_ERROR_CRC;
@@ -199,60 +200,60 @@ void DMAC_0_Handler(void) {
       callbackArg = REASON_ERROR_TRANSFER;
       interruptSource.channelError = CHANNEL_ERROR_TRANSFER_ERROR;
     }
-    // Stop channel
-    interruptSource.stop();
-  
-  // Has transfer action been completed?
-  } else if (DMAC->Channel[interruptSource.channelIndex].CHINTFLAG.bit.TCMPL) {
-    callbackArg = REASON_TRANSFER_COMPLETE;
-    goto updateTaskCounter;
-  
-  // Has channel been suspended? -> Get cause
+  // Has the channel been suspended?
   } else if (DMAC->Channel[interruptSource.channelIndex].CHINTFLAG.bit.SUSP) {
     
-    // Is it due to a descriptor error? -> Stop channel
+    // Is it due to a descriptor error? -> Set flag
     if (DMAC->Channel[interruptSource.channelIndex].CHSTATUS.bit.FERR){
-      interruptSource.stop();
       interruptSource.channelError = CHANNEL_ERROR_DESCRIPTOR_ERROR;     
       callbackArg = REASON_ERROR_DESCRIPTOR;                            
 
-    // Is it due to client pause command? -> Do nothing (dont call callback)
+    // Is it due to client pause command? -> Do nothing 
     } else if (DMAC->Channel[interruptSource.channelIndex].CHCTRLB.bit.CMD 
         == DMAC_CHCTRLB_CMD_SUSPEND_Val){ 
-      callbackArg = REASON_INVALID;
+      callbackArg = REASON_UNKNOWN;
 
-    // Is it due to a pause request on block? -> Set callback reason
-    } else if (writebackArray[interruptSource.channelIndex].BTCTRL.bit.BLOCKACT 
-        == DMAC_BTCTRL_BLOCKACT_SUSPEND_Val) {
-      callbackArg = REASON_TRANSFER_COMPLETE_PAUSED;
+    // Is it due to a pause request on block? -> Un-suspend channel
+    } else {
+      callbackArg = REASON_TRANSFER_COMPLETE;
+
+      // Unpause the channel (if applicable)
+      if (interruptSource.autoPause) {
+        interruptSource.pauseFlag = true;
+      } else {
+        DMAC->Channel[interruptSource.channelIndex].CHCTRLB.bit.CMD 
+          = DMAC_CHCTRLB_CMD_RESUME_Val;
+      }
 
       // Update the task counter: If current = primary -> reset it, else -> increment it
       updateTaskCounter: {
         if (writebackArray[interruptSource.channelIndex].DESCADDR.bit.DESCADDR
             == primaryDescriptorArray[interruptSource.channelIndex].DESCADDR.bit.DESCADDR) {
           interruptSource.activeTask = 0;
-        
         } else {
           interruptSource.activeTask++;
         }
       }
-    } else { // Should reach this point...
-      callbackArg = REASON_INVALID;
     }
-  } else { // Should reach this point... 
-    callbackArg = REASON_INVALID;
   }
+  // Is the interrupt source a peripheral trigger?
+  if (!interruptSource.swTriggerFlag) {
+    interruptTrigger = (DMA_TRIGGER_SOURCE)
+    DMAC->Channel[interruptSource.channelIndex].CHCTRLA.bit.TRIGSRC;
+  }
+  // Update the software trigger flags
+  interruptSource.swTriggerFlag = interruptSource.swPendingFlag;
+  interruptSource.swPendingFlag = false;
+
   // If callback exists & valid reason -> call callback
-  DMAC->Channel[interruptSource.channelIndex].CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_RESUME_Val;
   if (interruptSource.callbackFunction != nullptr) {
-    interruptSource.callbackFunction(callbackArg, interruptSource.activeTask, interruptSource);
+    interruptSource.callbackFunction(callbackArg, interruptTrigger, interruptSource.activeTask, interruptSource);
   }
   // Clear all flags
   DMAC->INTPEND.bit.TCMPL = 1; 
   DMAC->INTPEND.bit.SUSP = 1;
   DMAC->INTPEND.bit.TERR = 1;
 }
-
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -292,21 +293,16 @@ bool DMA_Utility::end() {
   DMAC->CTRL.bit.SWRST = 1;                       // Reset entire system          
   MCLK->AHBMASK.bit.DMAC_ = 0;                    // Disable clock
 
-    // Disable all interrupts
+  // Disable all interrupts
   for (int16_t i = 0; i < DMA_IRQ_COUNT; i++) {
     NVIC_ClearPendingIRQ((IRQn_Type)(DMAC_0_IRQn + i));  
     NVIC_DisableIRQ((IRQn_Type)(DMAC_0_IRQn + i));
   }
-
-  // Reset proxy class' fields
+  // Clear all channels
   for (int16_t i = 0; i < DMA_MAX_CHANNELS; i++) {      
-    channelArray[i].resetFields();
+    channelArray[i].clearChannel();
   }
-
-  // Reset all transfer descriptors
-  memset(primaryDescriptorArray, 0, sizeof(primaryDescriptorArray));
-  memset(writebackArray, 0, sizeof(writebackArray));
-
+  // Reset variables
   channelCount = 0;
   begun = false;
   return true;
@@ -360,7 +356,7 @@ bool DMAChannel::setTasks(DMATask **tasks, int16_t numTasks) {
   // Special case -> currently busy
   if (currentStatus == CHANNEL_STATUS_BUSY) {
     prevBusy = true;
-    pause();
+    suspend();
   }
   // Remove current tasks
   clearTasks();  
@@ -427,7 +423,12 @@ bool DMAChannel::setTasks(DMATask **tasks, int16_t numTasks) {
 
   // Un-suspend channel (if applicable)
   if (prevBusy) {
-    start();
+    resume();
+  }
+  // Enable the channel & interrupts (if applicable)
+  CH.CHCTRLA.bit.ENABLE = 1;
+  if ((CH.CHINTENSET.reg & DMAC_CHINTENSET_MASK) != DMAC_CHINTENSET_MASK) {
+    CH.CHINTENSET.reg |= DMAC_CHINTENSET_MASK;
   }
   return true;
 }
@@ -452,7 +453,7 @@ bool DMAChannel::addTask(DMATask *task, int16_t taskIndex) {
   // Does channel need to be suspended?
   if (currentStatus == CHANNEL_STATUS_BUSY) {
     prevBusy = true;
-    pause();
+    suspend();
   }
   // Inserting at beggining?
   if (taskIndex == 0) {
@@ -499,7 +500,12 @@ bool DMAChannel::addTask(DMATask *task, int16_t taskIndex) {
   }
   // Un-suspend channel (if applicable)
   if (prevBusy) {
-    start();
+    resume();
+  }
+  // Enable the channel & interrupts (if applicable)
+  CH.CHCTRLA.bit.ENABLE = 1;
+  if ((CH.CHINTENSET.reg & DMAC_CHINTENSET_MASK) != DMAC_CHINTENSET_MASK) {
+    CH.CHINTENSET.reg |= DMAC_CHINTENSET_MASK;
   }
   return true;
 }
@@ -516,14 +522,13 @@ bool DMAChannel::removeTask(int16_t taskIndex) {
   // Clamp taskIndex & check for status exception
   CLAMP(taskIndex, 0, getTaskCount() - 1);
 
-  // Removing last descriptor? -> clear tasks (disables channel)
+  // Removing last descriptor? -> clear tasks (disables the channel)
   if (primaryDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR == 0) {
     clearTasks();
 
   // Else -> Ensure channel is paused
   } else if (currentStatus == CHANNEL_STATUS_BUSY) {
-      pause();
-      prevBusy = true;
+    suspend();
   }
   // Removing primary descriptor?
   if (taskIndex == 0) {
@@ -560,9 +565,8 @@ bool DMAChannel::removeTask(int16_t taskIndex) {
   }
   // Un-suspend channel (if applicable)
   if (prevBusy) {
-    start();
+    resume();
   }
-
   return true;
 }
 
@@ -577,7 +581,7 @@ bool DMAChannel::clearTasks() {
   if (primaryDescriptorArray[channelIndex].SRCADDR.bit.SRCADDR == 0) {
     return true;
   }
-  // Disable channel
+  // Disable the chnanel
   CH.CHCTRLA.bit.ENABLE = 0;
 
   // Are there linked descriptors? If so, get the first one
@@ -621,14 +625,11 @@ int16_t DMAChannel::getTaskCount() {
   }
 }
 
-
-bool DMAChannel::trigger(int16_t actions) {
+bool DMAChannel::trigger() {
   // Handle exceptions
   DMA_CHANNEL_STATUS currentStatus = getStatus();
-  CLAMP(actions, 1, DMA_MAX_ACTIONS);
   if (currentStatus == CHANNEL_STATUS_NULL
-  || currentStatus == CHANNEL_STATUS_ERROR
-  || CH.CHSTATUS.bit.PEND) {
+  || currentStatus == CHANNEL_STATUS_ERROR) {
     return false;
   }
   // Enable channel & interrupts (if applicable)
@@ -636,9 +637,13 @@ bool DMAChannel::trigger(int16_t actions) {
   if ((CH.CHINTENSET.reg & DMAC_CHINTENSET_MASK) != DMAC_CHINTENSET_MASK) {
     CH.CHINTENSET.reg |= DMAC_CHINTENSET_MASK;
   }
-  // Trigger DMA & set flag
-  DMAC->SWTRIGCTRL.reg |= (1 << channelIndex);
-  swTriggerFlag = true;
+  // Trigger channel -> Or set pend flag
+  if (CH.CHSTATUS.bit.PEND) {
+    swPendingFlag = true;
+  } else {
+    swTriggerFlag = true;
+    DMAC->SWTRIGCTRL.reg |= (1 << channelIndex);
+  }
   return true;
 }
 
@@ -650,17 +655,14 @@ bool DMAChannel::reset() {
   || currentStatus == CHANNEL_STATUS_ERROR) {
     return false;
   }
-  // Capture state
-  bool wasSuspended = false;
-  if (currentStatus == CHANNEL_STATUS_PAUSED) {
-    wasSuspended = true;
-  }
-  // Reset channel
+  // Reset channel & flags
   CH.CHCTRLA.bit.ENABLE = 0;
   CH.CHCTRLA.bit.ENABLE = 1;
-  
+  swTriggerFlag = false;
+  swPendingFlag = false;
+
   // Restore previous state
-  if (wasSuspended) {
+  if (currentStatus == CHANNEL_STATUS_PAUSED) {
     CH.CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_SUSPEND_Val;
   }
   return true;
@@ -676,20 +678,148 @@ bool DMAChannel::suspend() {
   }
   // Send pause command
   CH.CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_SUSPEND_Val;
+  pauseFlag = true;
   return true;
 }
+
 
 bool DMAChannel::resume() {
   // Handle exceptions
   DMA_CHANNEL_STATUS currentStatus = getStatus();
-  if (currentStatus != CHANNEL_STATUS_PAUSED) {
+  if (currentStatus == CHANNEL_STATUS_NULL
+  || currentStatus == CHANNEL_STATUS_ERROR) {
     return false;
   }
   // Send resume command
   CH.CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_RESUME_Val;
+  pauseFlag = false;
   return true;
 }
 
+
+bool DMAChannel::jump(int16_t index) {
+  // Handle exceptions
+  DMA_CHANNEL_STATUS currentStatus = getStatus(); 
+  CLAMP(index, 0, getTaskCount());
+  if (currentStatus == CHANNEL_STATUS_NULL
+  || currentStatus == CHANNEL_STATUS_ERROR) {
+    return false;
+  }
+  // Change link of writeback descriptor (if applicable)
+  if (writebackArray[channelIndex].SRCADDR.bit.SRCADDR != DMAC_SRCADDR_RESETVALUE) {
+    DmacDescriptor *currentDescriptor = &primaryDescriptorArray[channelIndex];
+    for (int16_t i = 0; i < index; i++) {
+      currentDescriptor = (DmacDescriptor*)currentDescriptor->DESCADDR.bit.DESCADDR;
+    }
+    writebackArray[channelIndex].DESCADDR.bit.DESCADDR = (uint32_t)currentDescriptor;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+
+bool DMAChannel::enableExternalTrigger(DMA_TRIGGER_SOURCE source) {
+  // Handle exceptions
+  if (getStatus() == CHANNEL_STATUS_BUSY) {
+    return false;
+  }
+  // Capture initial status
+  bool wasEnabled = false;
+  bool wasPaused = false;
+  int16_t initIndex = 9;
+  if (CH.CHCTRLA.bit.ENABLE) {
+    wasEnabled = true;
+  }
+  if (pauseFlag) {
+    wasPaused = true;
+  }
+  if (primaryDescriptorArray[channelIndex].SRCADDR.bit.SRCADDR != DMAC_SRCADDR_RESETVALUE) {
+    initIndex = activeTask;
+  }
+  // Set up external trigger
+  CH.CHCTRLA.bit.ENABLE = 0;                // Disable channel
+  while(CH.CHCTRLA.bit.ENABLE);             // Sync
+  CH.CHCTRLA.bit.TRIGSRC = (uint8_t)source; // Set trigger source
+
+  // Update flags
+  swPendingFlag = false;
+  swTriggerFlag = false;
+
+  // Restore initial state
+  if (wasEnabled) {
+    CH.CHCTRLA.bit.ENABLE = 1;
+  }
+  if (wasPaused) {
+    CH.CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_SUSPEND_Val;
+  }
+  if (initIndex > 0) { // This is really the only solution...
+    jump(initIndex);
+  }
+  return true;
+}
+
+
+bool DMAChannel::disableExternalTrigger() {
+  // Handle exceptions
+  if (CH.CHCTRLA.bit.TRIGACT == TRIGGER_SOFTWARE) {
+    return true;
+  } else if (getStatus() == CHANNEL_STATUS_BUSY) {
+    return false;
+  }
+  // Capture previous state
+  bool wasEnabled = false;
+  bool wasPaused = false;
+  int16_t initIndex = 0;
+  if (CH.CHCTRLA.bit.ENABLE) {
+    wasEnabled = true;
+    if (pauseFlag) {
+      wasPaused = true;
+    }
+    if (primaryDescriptorArray[channelIndex].SRCADDR.bit.SRCADDR
+        != DMAC_SRCADDR_RESETVALUE) {
+      initIndex = activeTask;
+    }
+  }
+  // Disable channel and reset trigger
+  CH.CHCTRLA.bit.ENABLE = 0;                       
+  while(CH.CHCTRLA.bit.ENABLE == 1);               
+  CH.CHCTRLA.bit.TRIGSRC = (uint8_t)DMA_DEFAULT_TRIGGER_SOURCE;       
+  CH.CHCTRLA.bit.TRIGACT = (uint8_t)DMA_DEFAULT_TRIGGER_ACTION;        
+  CH.CHCTRLA.bit.ENABLE = 1; 
+
+  // Update flags
+  swPendingFlag = false;
+  swTriggerFlag = false;
+
+  // Restore intial state
+  if (wasEnabled) {
+    CH.CHCTRLA.bit.ENABLE = 1;
+    if (wasPaused) {
+      CH.CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_SUSPEND_Val;
+    }
+    if (initIndex > 0) {
+      jump(initIndex);
+    }
+  }
+
+  return true;
+}
+
+
+bool DMAChannel::changeExternalTrigger(DMA_TRIGGER_SOURCE newSource) {
+  return enableExternalTrigger(newSource);
+}
+
+
+void DMAChannel::clearChannel() {
+  clearTasks();
+  resetFields();
+
+  // Disable & reset channel
+  CH.CHCTRLA.bit.ENABLE = 0;
+  CH.CHCTRLA.bit.SWRST = 1;   
+}
 
 
 DMA_CHANNEL_STATUS DMAChannel::getStatus() {
@@ -699,13 +829,27 @@ DMA_CHANNEL_STATUS DMAChannel::getStatus() {
     return CHANNEL_STATUS_BUSY;
   } else if (CH.CHSTATUS.bit.PEND) {
     return CHANNEL_STATUS_BUSY;
-  } else if (CH.CHCTRLB.bit.CMD == DMAC_CHCTRLB_CMD_SUSPEND_Val) {
+  } else if (pauseFlag) {
     return CHANNEL_STATUS_PAUSED;
   } else if (primaryDescriptorArray[channelIndex].SRCADDR.bit.SRCADDR
       != DMAC_SRCADDR_RESETVALUE) {
     return CHANNEL_STATUS_IDLE;
   } else {
     return CHANNEL_STATUS_NULL;
+  }
+}
+
+int16_t DMAChannel::getPending() {
+  // Is trigger pending?
+  if (CH.CHSTATUS.bit.PEND) {
+    // What trigger is it?
+    if (swPendingFlag) {
+      return 1;
+    } else {
+      return 2;
+    }
+  } else {
+    return 0;
   }
 }
 
@@ -719,7 +863,6 @@ int16_t DMAChannel::getActiveTask() {
 
 DMA_CHANNEL_ERROR DMAChannel::getError() {
   DMA_CHANNEL_ERROR currentError = channelError;
-  channelError = CHANNEL_ERROR_NONE;
   return currentError;
 }
 
@@ -727,11 +870,13 @@ DMA_CHANNEL_ERROR DMAChannel::getError() {
 
 void DMAChannel::resetFields() {
   channelError = CHANNEL_ERROR_NONE;
-  initialized = false;
   activeTask = 0;
+  swTriggerFlag = false;
+  swPendingFlag = false;
+  autoPause = false;
+  pauseFlag = false;
   callbackFunction = nullptr;
 }
-
 
 DmacDescriptor *DMAChannel::createDescriptor(const DmacDescriptor *referenceDescriptor) {
   // Create descriptor in SRAM -> 128 bit aligned
@@ -743,130 +888,6 @@ DmacDescriptor *DMAChannel::createDescriptor(const DmacDescriptor *referenceDesc
   }                                                                                           
   return newDescriptor;  
 }
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-
-
-bool DMAChannel::start() {
-  // Handle exceptions -> no transfer descriptors
-  DMA_CHANNEL_STATUS currentStatus = getStatus();
-  if (primaryDescriptorArray[channelIndex].SRCADDR.bit.SRCADDR == 0) {
-    return false;
-  }
-  // If channel is disabled re-enable it
-  if (!CH.CHCTRLA.bit.ENABLE) {
-    CH.CHCTRLA.bit.ENABLE = 1;
-    activeTask = 0;
-  }
-  // If writeback descriptor is present & invalid, validate it
-  if (writebackArray[channelIndex].BTCTRL.bit.VALID == 0
-  && writebackArray[channelIndex].SRCADDR.bit.SRCADDR != 0) {
-    writebackArray[channelIndex].BTCTRL.bit.VALID = 1;
-  }
-  // If idle or busy-> triggerChannel
-  if (currentStatus == CHANNEL_STATUS_IDLE
-  || currentStatus == CHANNEL_STATUS_BUSY) { 
-    DMAC->SWTRIGCTRL.reg |= (1 << channelIndex); // Trigger channel
-   
-  // If paused -> send resume command
-  } else if (currentStatus == CHANNEL_STATUS_PAUSED) { 
-    CH.CHCTRLB.bit.CMD |= DMAC_CHCTRLB_CMD_RESUME; 
-  
-  } else {
-    return false;
-  }
-  return true;
-}
-
-bool DMAChannel::stop() {
-  // Disable & re-enable channel
-  CH.CHCTRLA.bit.ENABLE = 0;                          
-  CH.CHCTRLA.bit.ENABLE = 1;
-
-  // Reset command, counter & errors
-  CH.CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_NOACT;
-  channelError = CHANNEL_ERROR_NONE;
-  activeTask = 0;
-  return true;
-}
-
-
-bool DMAChannel::pause() {
-  // Check exceptions
-  DMA_CHANNEL_STATUS currentStatus = getStatus();
-  if (primaryDescriptorArray[channelIndex].SRCADDR.bit.SRCADDR == 0) {
-    return false;
-  } else if (currentStatus == CHANNEL_STATUS_PAUSED) {
-    return true;
-  }
-  // Pause channel
-  CH.CHCTRLB.bit.CMD |= DMAC_CHCTRLB_CMD_SUSPEND; 
-  return true;
-}
-
-
-bool DMAChannel::enableExternalTrigger(DMA_TRIGGER_SOURCE source) {
-  // Check for exceptions
-  DMA_CHANNEL_STATUS currentStatus = getStatus();
-
-  // Configure trigger
-  CH.CHCTRLA.bit.ENABLE = 0;                // Disable channel
-  while(CH.CHCTRLA.bit.ENABLE);             // Sync
-  CH.CHCTRLA.bit.TRIGSRC = (uint8_t)source; // Set trigger source
-  CH.CHCTRLA.bit.ENABLE = 1;                // Re-enable channel
-
-  return true;
-}
-
-
-bool DMAChannel::disableExternalTrigger() {
-  // Check for exceptions
-  DMA_CHANNEL_STATUS currentStatus = getStatus();
-  if (CH.CHCTRLA.bit.TRIGACT == TRIGGER_NONE) {
-    return true;
-  }
-  // Disable channel and reset trigger
-  CH.CHCTRLA.bit.ENABLE = 0;                       
-  while(CH.CHCTRLA.bit.ENABLE == 1);               
-  CH.CHCTRLA.bit.TRIGSRC = (uint8_t)DMA_DEFAULT_TRIGGER_SOURCE;       
-  CH.CHCTRLA.bit.TRIGACT = (uint8_t)DMA_DEFAULT_TRIGGER_ACTION;        
-  CH.CHCTRLA.bit.ENABLE = 1; 
-
-  return true;
-}
-
-
-bool DMAChannel::changeExternalTrigger(DMA_TRIGGER_SOURCE newSource) {
-  return enableExternalTrigger(newSource);
-}
-
-
-
-
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-/* If needed..
-inline void clearDescriptor(DmacDescriptor &descriptor) {       
-  descriptor.BTCTRL.reg   &= ~DMAC_BTCTRL_MASK;
-  descriptor.BTCNT.reg    &= ~DMAC_BTCNT_MASK;
-  descriptor.SRCADDR.reg  &= ~DMAC_SRCADDR_MASK;
-  descriptor.DSTADDR.reg  &= ~DMAC_DSTADDR_MASK;
-  descriptor.DESCADDR.reg &= ~DMAC_DESCADDR_MASK;
-}
-
-// IF MEMCPY DOES NOT WORK...
-  desc.BTCTRL.reg |= (DMAC_BTCTRL_MASK & actions[0].taskDescriptor->BTCTRL.reg); // Copy control settings
-  desc.BTCNT.bit.BTCNT = actions[0].taskDescriptor->BTCNT.bit.BTCNT;             // Copy beat count for transfer
-  desc.SRCADDR.bit.SRCADDR = actions[0].taskDescriptor->SRCADDR.bit.SRCADDR;     // Copy source address
-  desc.DSTADDR.bit.DSTADDR = actions[0].taskDescriptor->DSTADDR.bit.DSTADDR;     // Copy destination address.
-*/
-
-
 
 
 void printReg32(uint32_t reg, uint32_t mask) {

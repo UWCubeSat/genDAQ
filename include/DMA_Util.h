@@ -104,9 +104,12 @@ class DMAChannel {
 
   protected:
     const int16_t channelIndex = 0;
-    void (*callbackFunction)(DMA_INTERRUPT_REASON, int16_t,  DMAChannel&) = nullptr;
+    void (*callbackFunction)(DMA_INTERRUPT_REASON, DMA_TRIGGER_SOURCE, int16_t,  DMAChannel&) = nullptr;
 
     volatile bool swTriggerFlag = false; 
+    volatile bool swPendingFlag = false;
+    volatile bool autoPause = false;
+    volatile bool pauseFlag = false;
     volatile int16_t activeTask = 0;
     volatile DMA_CHANNEL_ERROR channelError = CHANNEL_ERROR_NONE;
   public:
@@ -124,12 +127,18 @@ class DMAChannel {
     bool clearTasks();
 
     int16_t getTaskCount();
+    
+    bool trigger();
 
-    bool start();
+    bool reset();
 
-    bool stop();
+    bool suspend();
 
-    bool pause();
+    bool resume();
+
+    bool jump(int16_t index);
+
+    void clearChannel();
 
     bool enableExternalTrigger(DMA_TRIGGER_SOURCE source);
 
@@ -137,33 +146,14 @@ class DMAChannel {
 
     bool changeExternalTrigger(DMA_TRIGGER_SOURCE newSource);
 
-
-
-    // NEW METHODS //
-    
-    bool trigger(int16_t actions);
-
-    bool reset();
-
-    bool jump();
-
-    bool suspend();
-
-    bool resume();
-
-    void clearChannel();
-
-    //setExternalTrigger()
-
-    //enableExternalTrigger()
-
-    //disableExternalTrigger()
-
     DMA_CHANNEL_STATUS getStatus();
+
+    int16_t getPending();
 
     bool isBusy();
 
     int16_t getActiveTask();
+
 
     DMA_CHANNEL_ERROR getError();
 

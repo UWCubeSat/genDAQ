@@ -72,11 +72,10 @@ enum DMA_CHANNEL_ERROR : int16_t {
 
 enum DMA_INTERRUPT_REASON : int16_t {
   REASON_TRANSFER_COMPLETE        = 0,
-  REASON_TRANSFER_COMPLETE_PAUSED = 1,
-  REASON_ERROR_DESCRIPTOR         = 2,
-  REASON_ERROR_TRANSFER           = 3,
-  REASON_ERROR_CRC                = 4,
-  REASON_INVALID                  = 5
+  REASON_ERROR_DESCRIPTOR         = 1,
+  REASON_ERROR_TRANSFER           = 2,
+  REASON_ERROR_CRC                = 3,
+  REASON_UNKNOWN                  = 4
 };
 
 enum DMA_TRANSFER_MODE : int16_t {
@@ -108,7 +107,7 @@ enum DMA_TARGET : int16_t {
 };
 
 enum DMA_TRIGGER_SOURCE : int16_t {
-  TRIGGER_NONE              = 0,
+  TRIGGER_SOFTWARE          = 0,
   TRIGGER_RTC_TIMESTAMP     = 1,
   TRIGGER_DSU_DCC0          = 2,
   TRIGGER_DSU_DCC1          = 3,
