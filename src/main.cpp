@@ -1,6 +1,29 @@
 
 #include <Arduino.h>
 #include <DMA_Util.h>
+#include <GlobalDefs.h>
+
+volatile bool readFlag = false;
+volatile int16_t irReason = 5;
+
+void callback(DMA_INTERRUPT_REASON reason, int16_t currentBlock, DMAChannel &Channel) {
+  readFlag = true;
+  irReason = (int16_t)reason;
+}
+
+uint8_t sourceArray[] = { 1, 2, 3, 4, 5}, destinationArray[] = { 0, 0, 0, 0, 0 }, destinationArray1[] = { 0, 0, 0, 0, 0 };
+
+
+void printArray(uint8_t *array, int16_t size) {
+  for (int i = 0; i < size; i++) {
+    if (i % 10 == 0) {
+      Serial.println();
+    }
+    Serial.print(array[i]);
+    Serial.print(" ");
+  }
+  Serial.println();
+}
 
 void setup() {
   Serial.begin(9600);
@@ -9,55 +32,51 @@ void setup() {
   }
   Serial.println("CONNECTED");
 
-  uint8_t sourceArray[5] = { 1, 2, 3, 4, 5};
-  uint8_t destinationArray[5] = { 0, 0, 0, 0, 0 };
-
   DMASettings mysettings;
   mysettings
-    .setBurstSize(4)
+    .setBurstSize(1)
     .setPriorityLevel(PRIORITY_HIGHEST)
-    .setTransferMode(BURST_MODE)
-    .setTransferThreshold(3);
+    .setTransferMode(BLOCK_MODE)
+    .setTransferThreshold(1)
+    .setCallbackFunction(callback);
 
   DMATask task1;
   task1
-    .setElementSize(2)
+    .setElementSize(1)
     .setTransferAmount(5)
-    .setSource(&sourceArray)
-    .setDestination(&destinationArray)
     .setIncrementConfig(true, true)
-    .setIncrementModifier(x16, SOURCE);
+    .setSource(&sourceArray)
+    .setDestination(&destinationArray);
 
   DMATask task2;
-  task2
+  task2 
     .setElementSize(1)
-    .setTransferAmount(3)
-    .setSource(&sourceArray)
-    .setDestination(&destinationArray)
+    .setTransferAmount(5)
     .setIncrementConfig(true, true)
-    .setIncrementModifier(x16, SOURCE);
-
-  DMATask task3;
-  task3
-    .setTransferAmount(7)
-    .setDestination(&destinationArray)
     .setSource(&sourceArray)
-    .setIncrementModifier(x128, DESTINATION);
-
-    DMATask task4;
-  task4
-    .setTransferAmount(33)
-    .setDestination(&destinationArray)
-    .setSource(&sourceArray)
-    .setIncrementModifier(x128, DESTINATION);
+    .setDestination(&destinationArray1);
 
   DMA.begin();
-  DMA[0].init(mysettings);
 
-  DMATask *taskArray[] = { &task1, &task2, &task3 };
+  DMA[0].init();
+  DMATask *taskArray[] = { &task1, &task2 }; 
+  DMA[0].setTasks(taskArray, 2);
 
-  DMA[0].setTasks(taskArray, 2);  
-  DMA[0].addTask(&task4, 0);
+  DMA[0].start();
+  while(DMA[0].isBusy());  
+
+  DMA[0].start();
+  while(DMA[0].isBusy()); 
+
+  printDesc(0);
+
+  Serial.println(irReason);
+  printArray(sourceArray, sizeof(sourceArray));
+  printArray(destinationArray, sizeof(destinationArray));
+  printArray(destinationArray1, sizeof(destinationArray));
+  
+
+
   Serial.println("------ TEST COMPLETE ------");
 }
 

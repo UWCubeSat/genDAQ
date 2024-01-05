@@ -15,87 +15,26 @@ void DMAC_4_Handler(void) __attribute__((weak, alias("DMAC_0_Handler")));
 DMA_Utility &DMA;
 
 //// COMMON VARIABLES ////
-static DmacDescriptor __attribute__((__aligned__(16)))
+DmacDescriptor __attribute__((__aligned__(16)))
   primaryDescriptorArray[DMA_MAX_CHANNELS] SECTION_DMAC_DESCRIPTOR,    
   writebackArray[DMA_MAX_CHANNELS] SECTION_DMAC_DESCRIPTOR;
 
 bool DMA_Utility::begun = false;
+
 int16_t DMA_Utility::channelCount = 0;
+
 DMAChannel DMA_Utility::channelArray[] = {
   DMAChannel(0), DMAChannel(1), DMAChannel(2), DMAChannel(3), DMAChannel(4),
   DMAChannel(5), DMAChannel(6), DMAChannel(7), DMAChannel(8), DMAChannel(9)
 };
 
-void printReg32(uint32_t reg, uint32_t mask) {
-  for (int i = 0; i < 32; i++) {
-    if (((mask >> i) & 1) == 1) {
-      Serial.print((String)((reg >> i) & 1));
-    } else {
-      Serial.print("#");
-    }
-  }
-  Serial.println("");
-}
-
-void printReg16(uint16_t reg, uint16_t mask) {
-  for (int i = 0; i < 16; i++) {
-    if (((mask >> i) & 1) == 1) {
-      Serial.print((String)((reg >> i) & 1));
-    } else {
-      Serial.print("#");
-    }
-  }
-  Serial.println("");
-}
-
-void printReg8(uint8_t reg, uint8_t mask) {
-  for (int i = 0; i < 8; i++) {
-    if (((mask >> i) & 1) == 1) {
-      Serial.print((String)((reg >> i) & 1));
-    } else {
-      Serial.print("#");
-    }
-  }
-  Serial.println("");
-}
-
-void printDescriptors(DmacDescriptor *primaryDescriptor, int16_t channelIndex) {
-  DmacDescriptor *currentDescriptor = primaryDescriptor;
-  uint32_t startAddr = (uint32_t)primaryDescriptor;
-  int16_t count = 0;
-  Serial.println("------------------------------------------------------------");
-  while((uint32_t)currentDescriptor != startAddr || count == 0) {
-    Serial.println("{Descriptor for channel -> " + (String)channelIndex
-      + "} {Number: "  + (String)count
-      + "} {Address: "     + (uint32_t)currentDescriptor
-      + "} {Link: "        + currentDescriptor->DESCADDR.bit.DESCADDR
-      + "} {Destination: " + currentDescriptor->DSTADDR.bit.DSTADDR
-      + "} {Source: "      + currentDescriptor->SRCADDR.bit.SRCADDR
-      + "} {Valid: "       + currentDescriptor->BTCTRL.bit.VALID + "}"
-    );
-    Serial.println("------------------------------------------------------------");
-    count++;
-    currentDescriptor = (DmacDescriptor*)currentDescriptor->DESCADDR.bit.DESCADDR;
-  }
-  currentDescriptor = &writebackArray[channelIndex];
-  Serial.println("{Writeback for channel -> " + (String)channelIndex
-    + "} {Address: "     + (uint32_t)currentDescriptor
-    + "} {Link: "        + currentDescriptor->DESCADDR.bit.DESCADDR
-    + "} {Destination: " + currentDescriptor->DSTADDR.bit.DSTADDR
-    + "} {Source: "      + currentDescriptor->SRCADDR.bit.SRCADDR
-    + "} {Valid: "       + currentDescriptor->BTCTRL.bit.VALID + "}"
-  );
-  Serial.println("------------------------------------------------------------");
-}
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-
 
 DMATask::DMATask() {
   resetSettings();
 }
 
-DMATask &DMATask::setIncrementConfig(bool incrementDestination, bool incrementSource) {
+DMATask &DMATask::setIncrementConfig(bool incrementDestination, bool incrementSource) {   ///////////// CHANGE EVERYTHING TO HAVE SOURCE FIRST, DESTINATION SECOND
   if (incrementDestination) {
     taskDescriptor.BTCTRL.bit.DSTINC = 1;
   } else {
@@ -139,20 +78,16 @@ DMATask &DMATask::setSource(void *sourcePointer) {
     // => ASSERT GOES HERE
   } else {
     uint32_t startAddress = (uint32_t)sourcePointer;
-    uint32_t targetAddress = 0;
-    if (taskDescriptor.BTCTRL.bit.SRCINC) {
-      if (taskDescriptor.BTCTRL.bit.STEPSEL) {
-        targetAddress = startAddress + (taskDescriptor.BTCNT.bit.BTCNT 
-          * (taskDescriptor.BTCTRL.bit.BEATSIZE + 1) 
-          * (1 << taskDescriptor.BTCTRL.bit.STEPSIZE)); 
-      } else {
-        targetAddress = startAddress + (taskDescriptor.BTCNT.bit.BTCNT
-          * (taskDescriptor.BTCTRL.bit.BEATSIZE + 1));
-      }   
+    uint32_t targAddress = 0;
+    if (taskDescriptor.BTCTRL.bit.STEPSEL && taskDescriptor.BTCTRL.bit.SRCINC) {
+      targAddress = startAddress + (taskDescriptor.BTCNT.bit.BTCNT 
+        * (taskDescriptor.BTCTRL.bit.BEATSIZE + 1) 
+        * (1 << taskDescriptor.BTCTRL.bit.STEPSIZE)); 
     } else {
-      targetAddress = startAddress;
-    }
-    taskDescriptor.SRCADDR.bit.SRCADDR = targetAddress;
+      targAddress = startAddress + (taskDescriptor.BTCNT.bit.BTCNT
+        * (taskDescriptor.BTCTRL.bit.BEATSIZE + 1));
+    }   
+    taskDescriptor.SRCADDR.bit.SRCADDR = targAddress;
   }
   return *this;
 }
@@ -163,17 +98,13 @@ DMATask &DMATask::setDestination(void *destinationPointer) {
   } else {
     uint32_t startAddress = (uint32_t)destinationPointer;
     uint32_t targAddress = 0;
-    if (taskDescriptor.BTCTRL.bit.DSTINC) {
-      if (taskDescriptor.BTCTRL.bit.STEPSEL) {
-        targAddress = startAddress + (taskDescriptor.BTCNT.bit.BTCNT
-          * (taskDescriptor.BTCTRL.bit.BEATSIZE + 1));
-      } else {
-        targAddress = startAddress + (taskDescriptor.BTCNT.bit.BTCNT
-          * (taskDescriptor.BTCTRL.bit.BEATSIZE + 1)
-          * (1 << taskDescriptor.BTCTRL.bit.STEPSIZE));
-      }
+    if (!taskDescriptor.BTCTRL.bit.STEPSEL && taskDescriptor.BTCTRL.bit.DSTINC) {
+      targAddress = startAddress + (taskDescriptor.BTCNT.bit.BTCNT
+        * (taskDescriptor.BTCTRL.bit.BEATSIZE + 1)
+        * (1 << taskDescriptor.BTCTRL.bit.STEPSIZE));
     } else {
-      targAddress = startAddress;
+      targAddress = startAddress + (taskDescriptor.BTCNT.bit.BTCNT
+        * (taskDescriptor.BTCTRL.bit.BEATSIZE + 1));
     }
     taskDescriptor.DSTADDR.bit.DSTADDR = targAddress;  
   }
@@ -230,7 +161,7 @@ DMASettings &DMASettings::setPriorityLevel(DMA_PRIORITY_LEVEL level) {
 }
 
 DMASettings &DMASettings::setCallbackFunction(void (*callbackFunction)
-  (DMA_INTERRUPT_REASON, DMAChannel&)) {
+  (DMA_INTERRUPT_REASON, int16_t, DMAChannel&)) {
   this->callbackFunction = callbackFunction;
   return *this;
 }
@@ -254,63 +185,67 @@ void DMASettings::resetSettings() {
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-void DMAC_0_Handler(void) {
+void DMAC_0_Handler(void) { 
   // Get interrupt source & set up variables
   DMAChannel &interruptSource = DMA[DMAC->INTPEND.bit.ID];
-  DMA_INTERRUPT_REASON callbackArg = SOURCE_UNKNOWN;
+  DMA_INTERRUPT_REASON callbackArg = REASON_INVALID;
 
-  // Has transfer completed? 
-  if (DMAC->INTPEND.bit.TCMPL) {
-    interruptSource.remainingActions--; 
-
-    // Are there remaining actions?
-    if (interruptSource.remainingActions > 1) {
-      callbackArg = SOURCE_TASK_COMPLETE;
-
-      // Is there a pending trigger? 
-      if (DMAC->INTPEND.bit.PEND) {
-        interruptSource.remainingActions += interruptSource.externalActions; // Yes -> Just increment
-      } else {
-        DMAC->SWTRIGCTRL.reg |= (1 << interruptSource.channelIndex); // No -> Send SW trigger
-      }
-    // Else -> No remaining actions
-    } else {
-      // Is there a trigger queued?
-      if (DMAC->INTPEND.bit.PEND ) {
-        callbackArg = SOURCE_TASK_COMPLETE;
-      } else {
-        callbackArg = SOURCE_CHANNEL_FREE;
-      }
-    }
-  // Has channel been suspended?
-  } else if (DMAC->INTPEND.bit.SUSP) {
-    
-    // Has there been a descriptor error?
-    if (DMAC->INTPEND.bit.FERR){
-      interruptSource.pauseFlag = true;                              // Set flag
-      callbackArg = SOURCE_DESCRIPTOR_ERROR;                         // Set callback arg
-      interruptSource.channelError = CHANNEL_ERROR_DESCRIPTOR_ERROR; // Set error
-      interruptSource.stop();                                        // Disable channel
-    
-    } else {
-      callbackArg = SOURCE_CHANNEL_PAUSED;
-    } 
-  // Has there been a transfer error?
-  } else if (DMAC->INTPEND.bit.TERR) {
-
-    // Yes -> Get/Set error type & disable channel
-    if (DMAC->INTPEND.bit.CRCERR) {
-      callbackArg = SOURCE_CRC_ERROR;
+  // Has there been a transfer error? -> Get cause
+  if (DMAC->INTPEND.bit.TERR) {
+    if (DMAC->INTPEND.bit.CRCERR) {                           
+      callbackArg = REASON_ERROR_CRC;
       interruptSource.channelError = CHANNEL_ERROR_CRC_ERROR;
     } else {
-      callbackArg = SOURCE_TRANSFER_ERROR;
+      callbackArg = REASON_ERROR_TRANSFER;
       interruptSource.channelError = CHANNEL_ERROR_TRANSFER_ERROR;
     }
+    // Stop channel
     interruptSource.stop();
+  
+  // Has transfer action been completed?
+  } else if (DMAC->Channel[interruptSource.channelIndex].CHINTFLAG.bit.TCMPL) {
+    callbackArg = REASON_TRANSFER_COMPLETE;
+    goto updateTaskCounter;
+  
+  // Has channel been suspended? -> Get cause
+  } else if (DMAC->Channel[interruptSource.channelIndex].CHINTFLAG.bit.SUSP) {
+    
+    // Is it due to a descriptor error? -> Stop channel
+    if (DMAC->Channel[interruptSource.channelIndex].CHSTATUS.bit.FERR){
+      interruptSource.stop();
+      interruptSource.channelError = CHANNEL_ERROR_DESCRIPTOR_ERROR;     
+      callbackArg = REASON_ERROR_DESCRIPTOR;                            
+
+    // Is it due to client pause command? -> Do nothing (dont call callback)
+    } else if (DMAC->Channel[interruptSource.channelIndex].CHCTRLB.bit.CMD 
+        == DMAC_CHCTRLB_CMD_SUSPEND_Val){ 
+      callbackArg = REASON_INVALID;
+
+    // Is it due to a pause request on block? -> Set callback reason
+    } else if (writebackArray[interruptSource.channelIndex].BTCTRL.bit.BLOCKACT 
+        == DMAC_BTCTRL_BLOCKACT_SUSPEND_Val) {
+      callbackArg = REASON_TRANSFER_COMPLETE_PAUSED;
+
+      // Update the task counter: If current = primary -> reset it, else -> increment it
+      updateTaskCounter: {
+        if (writebackArray[interruptSource.channelIndex].DESCADDR.bit.DESCADDR
+            == primaryDescriptorArray[interruptSource.channelIndex].DESCADDR.bit.DESCADDR) {
+          interruptSource.activeTask = 0;
+        
+        } else {
+          interruptSource.activeTask++;
+        }
+      }
+    } else { // Should reach this point...
+      callbackArg = REASON_INVALID;
+    }
+  } else { // Should reach this point... 
+    callbackArg = REASON_INVALID;
   }
-  // If callback exists -> call it
+  // If callback exists & valid reason -> call callback
+  DMAC->Channel[interruptSource.channelIndex].CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_RESUME_Val;
   if (interruptSource.callbackFunction != nullptr) {
-    interruptSource.callbackFunction(callbackArg, interruptSource);
+    interruptSource.callbackFunction(callbackArg, interruptSource.activeTask, interruptSource);
   }
   // Clear all flags
   DMAC->INTPEND.bit.TCMPL = 1; 
@@ -325,9 +260,9 @@ bool DMA_Utility::begin() {
   end(); // Reset DMA  
   
   // Configure DMA settings
-  DMAC->BASEADDR.reg = (uint32_t)primaryDescriptorArray;  // Set first descriptor SRAM address
-  DMAC->WRBADDR.reg = (uint32_t)writebackArray;           // Set writeback storage SRAM address              
-  MCLK->AHBMASK.bit.DMAC_ = 1;                            // Enable DMA clock.
+  MCLK->AHBMASK.bit.DMAC_ = 1;                                     // Enable DMA clock.
+  DMAC->BASEADDR.bit.BASEADDR = (uint32_t)primaryDescriptorArray;  // Set primary descriptor storage SRAM address
+  DMAC->WRBADDR.bit.WRBADDR = (uint32_t)writebackArray;            // Set writeback descriptor storage SRAM address              
   
   // Enable all priority levels
   for (int16_t i = 0; i < DMA_PRIORITY_LVL_COUNT; i++) {
@@ -344,8 +279,7 @@ bool DMA_Utility::begin() {
     NVIC_SetPriority((IRQn_Type)(DMAC_0_IRQn + i), (1 << __NVIC_PRIO_BITS) - 1);  
     NVIC_EnableIRQ((IRQn_Type)(DMAC_0_IRQn + i));
   }
-
-  // Re-enable DMAC
+  // Enable DMA
   DMAC->CTRL.bit.DMAENABLE = 1;
   begun = true; 
   return true;
@@ -355,8 +289,7 @@ bool DMA_Utility::begin() {
 bool DMA_Utility::end() {
   // Clear DMA registers
   DMAC->CTRL.bit.DMAENABLE = 0;                   // Disable system -> grants write access
-  while(DMAC->CTRL.bit.DMAENABLE)                 // Sync
-  DMAC->CTRL.bit.SWRST = 1;                       // Reset entire system                    
+  DMAC->CTRL.bit.SWRST = 1;                       // Reset entire system          
   MCLK->AHBMASK.bit.DMAC_ = 0;                    // Disable clock
 
     // Disable all interrupts
@@ -397,53 +330,6 @@ DMAChannel::DMAChannel(const int16_t channelIndex)
   : channelIndex(channelIndex) {}
 
 
-bool DMAChannel::init(DMASettings &settings) {
-  exit(); // Ensure channel cleared
-
-  CH.CHCTRLA.reg |= settings.settingsMask;          // Set channel control properties
-  CH.CHPRILVL.bit.PRILVL = settings.priorityLevel;  // Set channel priority
-  CH.CHINTENSET.reg |= DMAC_CHINTENSET_MASK;        // Enable all interrupts
-
-  // Set fields
-  initialized = true;
-  this->callbackFunction = settings.callbackFunction;    
-  return true;
-}
-
-
-bool DMAChannel::exit() {
-  // Reset channel registers
-  CH.CHCTRLA.bit.ENABLE = 0;                     // Disable channel
-  while(CH.CHCTRLA.bit.ENABLE);                  // Sync
-  CH.CHCTRLA.bit.SWRST = 1;                      // Reset channel registers
-
-  // Reset descriptors
-  memset(&primaryDescriptorArray[channelIndex], 0, sizeof(DmacDescriptor));
-  memset(&writebackArray[channelIndex], 0, sizeof(DmacDescriptor));
-
-  resetFields();
-  return true;
-}
-
-
-bool DMAChannel::updateSettings(DMASettings &settings) {
-  // Ensure not busy & initialized
-  if (getStatus() != CHANNEL_STATUS_IDLE
-  && getStatus() != CHANNEL_STATUS_NULL) {
-    return false;
-  }
-  //Disable channel -> grants write access
-  CH.CHCTRLA.bit.ENABLE = 0;
-  while(CH.CHCTRLA.bit.ENABLE);
-  
-  // Update settings
-  CH.CHCTRLA.reg |= settings.settingsMask;
-  CH.CHPRILVL.bit.PRILVL = settings.priorityLevel;
-
-  return true;
-}
-
-
 bool DMAChannel::setTasks(DMATask **tasks, int16_t numTasks) {  
   // Establish temp variables
   DmacDescriptor *currentDescriptor = &primaryDescriptorArray[channelIndex];; 
@@ -453,10 +339,9 @@ bool DMAChannel::setTasks(DMATask **tasks, int16_t numTasks) {
 
   // Check for exceptions
   DMA_CHANNEL_STATUS currentStatus = getStatus();
-  if (currentStatus == CHANNEL_STATUS_NULL
-  || (tasks == nullptr 
+  if (tasks == nullptr 
   || numTasks > DMA_MAX_TASKS 
-  || numTasks <= 0)) { 
+  || numTasks <= 0) { 
     return false;
   }
   // Count number of null tasks in passed array
@@ -485,7 +370,7 @@ bool DMAChannel::setTasks(DMATask **tasks, int16_t numTasks) {
     sizeof(DmacDescriptor));
 
   // If active handle re-linking written-back descriptor/task
-  if (getStatus() == CHANNEL_STATUS_PAUSED) {
+  if (writebackArray[channelIndex].DESCADDR.bit.DESCADDR != 0) {
 
     // Handle case -> currently task is at end of list or is only task
     if (writebackArray[channelIndex].DESCADDR.bit.DESCADDR
@@ -515,7 +400,7 @@ bool DMAChannel::setTasks(DMATask **tasks, int16_t numTasks) {
       }
     }
   }
-  // Link tasks together (if applicable) 
+  // Link tasks together in chain
   if (numTasks > 1) {
     // Link primary task to next task -> begins linked list of tasks
     currentDescriptor = createDescriptor(&tasks[1]->taskDescriptor);
@@ -533,7 +418,7 @@ bool DMAChannel::setTasks(DMATask **tasks, int16_t numTasks) {
         writebackArray[channelIndex].DESCADDR.bit.DESCADDR = (uint32_t)nextDescriptor;
       }
     }
-  } else { // -> Only descriptor in list is primary one...
+  } else { // -> Link task to itself (loop)
     currentDescriptor = &primaryDescriptorArray[channelIndex];
   }
   // Link last descriptor (currentDescriptor) -> first (loop chain)
@@ -551,14 +436,17 @@ bool DMAChannel::setTasks(DMATask **tasks, int16_t numTasks) {
 bool DMAChannel::addTask(DMATask *task, int16_t taskIndex) {
   // Establish temp variables
   DMA_CHANNEL_STATUS currentStatus = getStatus();
+  int16_t taskCount = getTaskCount();
   DmacDescriptor *previousDescriptor = &primaryDescriptorArray[channelIndex];
   DmacDescriptor *newDescriptor = nullptr;
   bool prevBusy = false;
 
   // Clamp taskIndex & check for status exception
-  CLAMP(taskIndex, 0, getTaskCount());
-  if (currentStatus == CHANNEL_STATUS_NULL
-  || task == nullptr) {
+  if (taskIndex == -1) {
+    taskIndex = taskCount;
+  }
+  CLAMP(taskIndex, 0, taskCount);
+  if (task == nullptr) {
     return false;
   }
   // Does channel need to be suspended?
@@ -568,12 +456,17 @@ bool DMAChannel::addTask(DMATask *task, int16_t taskIndex) {
   }
   // Inserting at beggining?
   if (taskIndex == 0) {
-    newDescriptor = createDescriptor(&primaryDescriptorArray[channelIndex]); // New descriptor = primary descriptor
-    memcpy(&primaryDescriptorArray[channelIndex], &task->taskDescriptor,     // Copy added descriptor -> primary slot
+
+    // Does a primary descriptor alr exist?
+    if (taskCount > 0) {
+      newDescriptor = createDescriptor(&primaryDescriptorArray[channelIndex]); // New desciptor = primary descriptor
+    } else {  
+      newDescriptor = &primaryDescriptorArray[channelIndex]; // "New" descriptor = added descriptor
+    }
+    // Copy added descriptor into primary slot & link it to "new" dsecriptor
+    memcpy(&primaryDescriptorArray[channelIndex], &task->taskDescriptor,  
       sizeof(DmacDescriptor));
-   
-    // Link primary (added) -> new (old primary)
-    primaryDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR = (uint32_t)newDescriptor; 
+    primaryDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR = (uint32_t)newDescriptor;
 
   // Inserting at end? -> New descriptor = added descriptor
   } else if (taskIndex == getTaskCount()) {
@@ -608,9 +501,6 @@ bool DMAChannel::addTask(DMATask *task, int16_t taskIndex) {
   if (prevBusy) {
     start();
   }
-
- printDescriptors(&primaryDescriptorArray[channelIndex], channelIndex); ////////// TEMPORARY -> TO BE REMOVED //////////
-
   return true;
 }
 
@@ -625,9 +515,7 @@ bool DMAChannel::removeTask(int16_t taskIndex) {
 
   // Clamp taskIndex & check for status exception
   CLAMP(taskIndex, 0, getTaskCount() - 1);
-  if (currentStatus == CHANNEL_STATUS_NULL) {
-    return false;
-  }
+
   // Removing last descriptor? -> clear tasks (disables channel)
   if (primaryDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR == 0) {
     clearTasks();
@@ -637,16 +525,16 @@ bool DMAChannel::removeTask(int16_t taskIndex) {
       pause();
       prevBusy = true;
   }
-  // Removing primary descriptor? -> Overwrite it with 2nd descriptor using memcpy
+  // Removing primary descriptor?
   if (taskIndex == 0) {
+    removedAddress = (uint32_t)&primaryDescriptorArray[channelIndex];
+
+    // Overwrite the primary descriptor with 2nd one & delete it (the 2nd one).
     currentDescriptor = (DmacDescriptor*)primaryDescriptorArray[channelIndex] 
       .DESCADDR.bit.DESCADDR;
-    memcpy(&primaryDescriptorArray[channelIndex], &currentDescriptor,         
+    nextAddress = (uint32_t)currentDescriptor;
+    memcpy(&primaryDescriptorArray[channelIndex], currentDescriptor,         
       sizeof(DmacDescriptor));    
-
-    // Save addresses & delete copied (2nd) descriptor
-    removedAddress = (uint32_t)currentDescriptor;
-    nextAddress = currentDescriptor->DESCADDR.bit.DESCADDR;
     delete currentDescriptor;          
 
   // Handle cases -> removing from middle/end of chain
@@ -674,6 +562,7 @@ bool DMAChannel::removeTask(int16_t taskIndex) {
   if (prevBusy) {
     start();
   }
+
   return true;
 }
 
@@ -687,8 +576,6 @@ bool DMAChannel::clearTasks() {
   // Check exceptions                                                                 
   if (primaryDescriptorArray[channelIndex].SRCADDR.bit.SRCADDR == 0) {
     return true;
-  } else if (getStatus() == CHANNEL_STATUS_NULL) {
-    return false;
   }
   // Disable channel
   CH.CHCTRLA.bit.ENABLE = 0;
@@ -705,8 +592,9 @@ bool DMAChannel::clearTasks() {
       currentDescriptor = nextDescriptor;
     }
   }
-  // Can't delete primary descriptor so clear it...
+  // Can't delete primary/writeback descriptor so clear it...
   memset(&primaryDescriptorArray[channelIndex], 0, sizeof(DmacDescriptor));
+  memset(&writebackArray[channelIndex], 0, sizeof(DmacDescriptor));
   return true;
 }
 
@@ -734,150 +622,113 @@ int16_t DMAChannel::getTaskCount() {
 }
 
 
-bool DMAChannel::start(int16_t actions) {
+bool DMAChannel::trigger(int16_t actions) {
   // Handle exceptions
   DMA_CHANNEL_STATUS currentStatus = getStatus();
-  CLAMP(actions, 1, DMA_MAX_ACTIONS - remainingActions);
-  if (primaryDescriptorArray[channelIndex].SRCADDR.bit.SRCADDR == 0) {
-    return false;
-  } else if (currentStatus == CHANNEL_STATUS_NULL) {
-    return false;
-  }
-  // If channel is disabled re-enable it
-  if (CH.CHCTRLA.bit.ENABLE == 0) {
-    CH.CHCTRLA.bit.ENABLE = 1;
-  }
-  // If writeback descriptor is present & invalid, validate it
-  if (writebackArray[channelIndex].BTCTRL.bit.VALID == 0
-  && writebackArray[channelIndex].SRCADDR.bit.SRCADDR != 0) {
-    writebackArray[channelIndex].BTCTRL.bit.VALID = 1;
-  }
-  // If idle -> increment actions & trigger channel 
-  if (currentStatus == CHANNEL_STATUS_IDLE) { 
-    remainingActions += actions;
-    DMAC->SWTRIGCTRL.reg |= (1 << channelIndex); // Trigger channel
-
-  // If paused -> clear flag & send resume command
-  } else if (currentStatus == CHANNEL_STATUS_PAUSED) { 
-    pauseFlag = false;
-    CH.CHCTRLB.bit.CMD |= DMAC_CHCTRLB_CMD_RESUME; 
-
-  // If busy -> Increment remaining cycles counter
-  } else if (currentStatus == CHANNEL_STATUS_BUSY){ 
-    remainingActions += actions;
-  }
-  return true;
-}
-
-bool DMAChannel::stop() {
-  // Check exceptions
-  DMA_CHANNEL_STATUS currentStatus = getStatus();
-  if (currentStatus == CHANNEL_STATUS_NULL) {
+  CLAMP(actions, 1, DMA_MAX_ACTIONS);
+  if (currentStatus == CHANNEL_STATUS_NULL
+  || currentStatus == CHANNEL_STATUS_ERROR
+  || CH.CHSTATUS.bit.PEND) {
     return false;
   }
-  // If channel paused or busy -> disable, sync & re-enable channel
-  if (currentStatus == CHANNEL_STATUS_PAUSED || CHANNEL_STATUS_BUSY) {
-    CH.CHCTRLA.bit.ENABLE = 0;                          
-    while(CH.CHCTRLA.bit.ENABLE != 0); 
-    CH.CHCTRLA.bit.ENABLE = 1;
+  // Enable channel & interrupts (if applicable)
+  if (!CH.CHCTRLA.bit.ENABLE) CH.CHCTRLA.bit.ENABLE = 1;
+  if ((CH.CHINTENSET.reg & DMAC_CHINTENSET_MASK) != DMAC_CHINTENSET_MASK) {
+    CH.CHINTENSET.reg |= DMAC_CHINTENSET_MASK;
   }
-  // Reset command, counter & errors
-  CH.CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_NOACT;
-  remainingActions = 0;
-  pauseFlag = false;
-  channelError = CHANNEL_ERROR_NONE;
+  // Trigger DMA & set flag
+  DMAC->SWTRIGCTRL.reg |= (1 << channelIndex);
+  swTriggerFlag = true;
   return true;
 }
 
 
-bool DMAChannel::pause() {
-  // Check exceptions
+bool DMAChannel::reset() {
+  // Handle exceptions
   DMA_CHANNEL_STATUS currentStatus = getStatus();
   if (currentStatus == CHANNEL_STATUS_NULL
-  || primaryDescriptorArray[channelIndex].SRCADDR.bit.SRCADDR == 0) {
-    return false;
-  } else if (currentStatus == CHANNEL_STATUS_PAUSED) {
-    return true;
-  }
-  // Set flag & pause channel
-  pauseFlag = true;
-  CH.CHCTRLB.bit.CMD |= DMAC_CHCTRLB_CMD_SUSPEND; 
-  return true;
-}
-
-
-bool DMAChannel::enableExternalTrigger(DMA_TRIGGER_SOURCE source, int16_t actions) {
-  // Handle tasks = 0
-  if (actions == 0) {
-    actions = getTaskCount();
-  }
-
-  // Check for exceptions
-  DMA_CHANNEL_STATUS currentStatus = getStatus();
-  if (currentStatus == CHANNEL_STATUS_NULL) { 
+  || currentStatus == CHANNEL_STATUS_ERROR) {
     return false;
   }
-  // Clamp & set cycle count
-  CLAMP(actions, 1, DMA_MAX_ACTIONS);
-  externalActions = actions;
+  // Capture state
+  bool wasSuspended = false;
+  if (currentStatus == CHANNEL_STATUS_PAUSED) {
+    wasSuspended = true;
+  }
+  // Reset channel
+  CH.CHCTRLA.bit.ENABLE = 0;
+  CH.CHCTRLA.bit.ENABLE = 1;
   
-  // Configure trigger
-  CH.CHCTRLA.bit.ENABLE = 0;                // Disable channel
-  while(CH.CHCTRLA.bit.ENABLE);        // Sync
-  CH.CHCTRLA.bit.TRIGSRC = (uint8_t)source; // Set trigger source
-  CH.CHCTRLA.bit.ENABLE = 1;                // Re-enable channel
-
+  // Restore previous state
+  if (wasSuspended) {
+    CH.CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_SUSPEND_Val;
+  }
   return true;
 }
 
-bool DMAChannel::disableExternalTrigger() {
-  // Check for exceptions
+
+bool DMAChannel::suspend() {
+  // Handle exceptions
   DMA_CHANNEL_STATUS currentStatus = getStatus();
-  if (CH.CHCTRLA.bit.TRIGACT == TRIGGER_NONE) {
-    return true;
-  } else if (currentStatus == CHANNEL_STATUS_NULL) {
+  if (currentStatus == CHANNEL_STATUS_NULL
+  || currentStatus == CHANNEL_STATUS_ERROR) {
     return false;
   }
-  // Disable channel and reset trigger
-  CH.CHCTRLA.bit.ENABLE = 0;                       
-  while(CH.CHCTRLA.bit.ENABLE == 1);               
-  CH.CHCTRLA.bit.TRIGSRC = (uint8_t)DMA_DEFAULT_TRIGGER_SOURCE;       
-  CH.CHCTRLA.bit.TRIGACT = (uint8_t)DMA_DEFAULT_TRIGGER_ACTION;        
-  CH.CHCTRLA.bit.ENABLE = 1; 
-
+  // Send pause command
+  CH.CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_SUSPEND_Val;
   return true;
 }
 
-
-bool DMAChannel::changeExternalTrigger(DMA_TRIGGER_SOURCE newSource, int16_t actions) {
-  return enableExternalTrigger(newSource, actions);
+bool DMAChannel::resume() {
+  // Handle exceptions
+  DMA_CHANNEL_STATUS currentStatus = getStatus();
+  if (currentStatus != CHANNEL_STATUS_PAUSED) {
+    return false;
+  }
+  // Send resume command
+  CH.CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_RESUME_Val;
+  return true;
 }
+
 
 
 DMA_CHANNEL_STATUS DMAChannel::getStatus() {
-  if (pauseFlag) {
-    return CHANNEL_STATUS_PAUSED;
-  } else if (remainingActions > 0 ||((DMAC->PENDCH.reg & (1 << channelIndex)) != 0 )) {  
+  if (channelError != CHANNEL_ERROR_NONE) {
+    return CHANNEL_STATUS_ERROR;
+  } else if (CH.CHSTATUS.bit.BUSY) {  
     return CHANNEL_STATUS_BUSY;
-  } else if (initialized) {
+  } else if (CH.CHSTATUS.bit.PEND) {
+    return CHANNEL_STATUS_BUSY;
+  } else if (CH.CHCTRLB.bit.CMD == DMAC_CHCTRLB_CMD_SUSPEND_Val) {
+    return CHANNEL_STATUS_PAUSED;
+  } else if (primaryDescriptorArray[channelIndex].SRCADDR.bit.SRCADDR
+      != DMAC_SRCADDR_RESETVALUE) {
     return CHANNEL_STATUS_IDLE;
   } else {
     return CHANNEL_STATUS_NULL;
   }
 }
 
-
-DMA_CHANNEL_ERROR DMAChannel::getError() {
-  return channelError;
+bool DMAChannel::isBusy() {
+  return getStatus() == CHANNEL_STATUS_BUSY;
 }
 
+int16_t DMAChannel::getActiveTask() {
+  return activeTask;
+}
+
+DMA_CHANNEL_ERROR DMAChannel::getError() {
+  DMA_CHANNEL_ERROR currentError = channelError;
+  channelError = CHANNEL_ERROR_NONE;
+  return currentError;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 void DMAChannel::resetFields() {
   channelError = CHANNEL_ERROR_NONE;
   initialized = false;
-  pauseFlag = false;
-  remainingActions = 0;
-  externalActions = 0;
+  activeTask = 0;
   callbackFunction = nullptr;
 }
 
@@ -892,6 +743,108 @@ DmacDescriptor *DMAChannel::createDescriptor(const DmacDescriptor *referenceDesc
   }                                                                                           
   return newDescriptor;  
 }
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+bool DMAChannel::start() {
+  // Handle exceptions -> no transfer descriptors
+  DMA_CHANNEL_STATUS currentStatus = getStatus();
+  if (primaryDescriptorArray[channelIndex].SRCADDR.bit.SRCADDR == 0) {
+    return false;
+  }
+  // If channel is disabled re-enable it
+  if (!CH.CHCTRLA.bit.ENABLE) {
+    CH.CHCTRLA.bit.ENABLE = 1;
+    activeTask = 0;
+  }
+  // If writeback descriptor is present & invalid, validate it
+  if (writebackArray[channelIndex].BTCTRL.bit.VALID == 0
+  && writebackArray[channelIndex].SRCADDR.bit.SRCADDR != 0) {
+    writebackArray[channelIndex].BTCTRL.bit.VALID = 1;
+  }
+  // If idle or busy-> triggerChannel
+  if (currentStatus == CHANNEL_STATUS_IDLE
+  || currentStatus == CHANNEL_STATUS_BUSY) { 
+    DMAC->SWTRIGCTRL.reg |= (1 << channelIndex); // Trigger channel
+   
+  // If paused -> send resume command
+  } else if (currentStatus == CHANNEL_STATUS_PAUSED) { 
+    CH.CHCTRLB.bit.CMD |= DMAC_CHCTRLB_CMD_RESUME; 
+  
+  } else {
+    return false;
+  }
+  return true;
+}
+
+bool DMAChannel::stop() {
+  // Disable & re-enable channel
+  CH.CHCTRLA.bit.ENABLE = 0;                          
+  CH.CHCTRLA.bit.ENABLE = 1;
+
+  // Reset command, counter & errors
+  CH.CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_NOACT;
+  channelError = CHANNEL_ERROR_NONE;
+  activeTask = 0;
+  return true;
+}
+
+
+bool DMAChannel::pause() {
+  // Check exceptions
+  DMA_CHANNEL_STATUS currentStatus = getStatus();
+  if (primaryDescriptorArray[channelIndex].SRCADDR.bit.SRCADDR == 0) {
+    return false;
+  } else if (currentStatus == CHANNEL_STATUS_PAUSED) {
+    return true;
+  }
+  // Pause channel
+  CH.CHCTRLB.bit.CMD |= DMAC_CHCTRLB_CMD_SUSPEND; 
+  return true;
+}
+
+
+bool DMAChannel::enableExternalTrigger(DMA_TRIGGER_SOURCE source) {
+  // Check for exceptions
+  DMA_CHANNEL_STATUS currentStatus = getStatus();
+
+  // Configure trigger
+  CH.CHCTRLA.bit.ENABLE = 0;                // Disable channel
+  while(CH.CHCTRLA.bit.ENABLE);             // Sync
+  CH.CHCTRLA.bit.TRIGSRC = (uint8_t)source; // Set trigger source
+  CH.CHCTRLA.bit.ENABLE = 1;                // Re-enable channel
+
+  return true;
+}
+
+
+bool DMAChannel::disableExternalTrigger() {
+  // Check for exceptions
+  DMA_CHANNEL_STATUS currentStatus = getStatus();
+  if (CH.CHCTRLA.bit.TRIGACT == TRIGGER_NONE) {
+    return true;
+  }
+  // Disable channel and reset trigger
+  CH.CHCTRLA.bit.ENABLE = 0;                       
+  while(CH.CHCTRLA.bit.ENABLE == 1);               
+  CH.CHCTRLA.bit.TRIGSRC = (uint8_t)DMA_DEFAULT_TRIGGER_SOURCE;       
+  CH.CHCTRLA.bit.TRIGACT = (uint8_t)DMA_DEFAULT_TRIGGER_ACTION;        
+  CH.CHCTRLA.bit.ENABLE = 1; 
+
+  return true;
+}
+
+
+bool DMAChannel::changeExternalTrigger(DMA_TRIGGER_SOURCE newSource) {
+  return enableExternalTrigger(newSource);
+}
+
+
+
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -912,6 +865,87 @@ inline void clearDescriptor(DmacDescriptor &descriptor) {
   desc.SRCADDR.bit.SRCADDR = actions[0].taskDescriptor->SRCADDR.bit.SRCADDR;     // Copy source address
   desc.DSTADDR.bit.DSTADDR = actions[0].taskDescriptor->DSTADDR.bit.DSTADDR;     // Copy destination address.
 */
+
+
+
+
+void printReg32(uint32_t reg, uint32_t mask) {
+  for (int i = 0; i < 32; i++) {
+    if (((mask >> i) & 1) == 1) {
+      Serial.print((String)((reg >> i) & 1));
+    } else {
+      Serial.print("#");
+    }
+  }
+  Serial.println("");
+}
+
+void printReg16(uint16_t reg, uint16_t mask) {
+  for (int i = 0; i < 16; i++) {
+    if (((mask >> i) & 1) == 1) {
+      Serial.print((String)((reg >> i) & 1));
+    } else {
+      Serial.print("#");
+    }
+  }
+  Serial.println("");
+}
+
+void printReg8(uint8_t reg, uint8_t mask) {
+  for (int i = 0; i < 8; i++) {
+    if (((mask >> i) & 1) == 1) {
+      Serial.print((String)((reg >> i) & 1));
+    } else {
+      Serial.print("#");
+    }
+  }
+  Serial.println("");
+}
+
+void printDescriptors(DmacDescriptor *primaryDescriptor, DmacDescriptor *writebackDescriptor, 
+  int16_t channelIndex) {
+  DmacDescriptor *currentDescriptor = primaryDescriptor;
+  uint32_t startAddr = (uint32_t)currentDescriptor;
+  int16_t count = 0;
+  if (!currentDescriptor->DESCADDR.bit.DESCADDR) {
+    Serial.println("printDescriptors: ERROR - INVALID PRIMARY DESCRIPTOR");
+  } else {
+    while((uint32_t)currentDescriptor != startAddr || count == 0) {
+      Serial.println("------------------------------------------------------------");
+      Serial.println("{Descriptor for channel -> " + (String)channelIndex
+        + "} {Number: "  + (String)count
+        + "} {Address: "     + (uint32_t)currentDescriptor
+        + "} {Link: "        + currentDescriptor->DESCADDR.bit.DESCADDR
+        + "} {Source: "      + currentDescriptor->SRCADDR.bit.SRCADDR
+        + "} {Destination: " + currentDescriptor->DSTADDR.bit.DSTADDR
+        + "} {Count: "       + currentDescriptor->BTCNT.bit.BTCNT
+        + "} {Valid: "       + currentDescriptor->BTCTRL.bit.VALID + "}"
+      );
+      count++;
+      currentDescriptor = (DmacDescriptor*)currentDescriptor->DESCADDR.bit.DESCADDR;
+      if (count > DMA_MAX_TASKS) {
+        Serial.println("printDescriptors: ERROR - TIMEOUT");
+        break;
+      }
+    }
+  }
+  Serial.println("------------------------------------------------------------");
+  currentDescriptor = writebackDescriptor;
+  Serial.println("{Writeback for channel -> " + (String)channelIndex
+    + "} {Address: "     + (uint32_t)currentDescriptor
+    + "} {Link: "        + currentDescriptor->DESCADDR.bit.DESCADDR
+    + "} {Source: "      + currentDescriptor->SRCADDR.bit.SRCADDR
+    + "} {Destination: " + currentDescriptor->DSTADDR.bit.DSTADDR
+    + "} {Count: "       + currentDescriptor->BTCNT.bit.BTCNT
+    + "} {Valid: "       + currentDescriptor->BTCTRL.bit.VALID + "}"
+  );
+  Serial.println("------------------------------------------------------------");
+}
+
+
+void printDesc(int16_t channel) {
+  printDescriptors(&primaryDescriptorArray[channel], &writebackArray[channel], channel);
+}
 
 
 
