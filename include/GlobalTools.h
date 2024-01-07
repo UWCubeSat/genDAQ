@@ -4,6 +4,7 @@
 
 #pragma once
 #include <inttypes.h>
+#include <GlobalDefs.h>
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> ERROR SYSTEM
@@ -16,6 +17,10 @@ class ErrorSys_ {
   public:
 
     void throwError(ERROR_ID error);
+
+    void assert(bool statement, ASSERT_ID error);
+
+
 
 };
 extern ErrorSys_ &ErrorSys;

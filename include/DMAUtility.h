@@ -5,14 +5,22 @@
 
 class DMAUtility;
 class DMAChannel;
-struct Descriptor;
+struct TransferDescriptor;
+struct DMAChannel::ChannelSettings;
 
-typedef void (*DMACallbackFunction)(DMAChannel &channel, int16_t descriptorIndex, DMA_ERROR error);
+typedef void (*DMACallbackFunction)(DMA_CALLBACK_REASON reason, DMAChannel &source, 
+int16_t descriptorIndex, int16_t currentTrigger, DMA_ERROR error);
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> DMA UTILITY
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 class DMAUtility {
   private:
+    DMAUtility() {}
     static DMAChannel channelArray[DMA_MAX_CHANNELS];
+    static bool begun;
+    static int16_t currentChannel;
 
   public:
 
@@ -22,64 +30,56 @@ class DMAUtility {
 
     DMAChannel &getChannel(int16_t channelIndex);
 
+    DMAChannel &operator [] (int16_t channelIndex);
 
-  private:
-    DMAUtility() {}
-    
+    DMAChannel *allocateChannel();
+    DMAChannel *allocateChannel(int16_t ownerID);
+
+    void freeChannel(int16_t channelIndex);
+
 };
 extern DMAUtility &DMA;
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> DMA DESCRIPTOR
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-
-struct Descriptor {
+struct TransferDescriptor {
   DmacDescriptor desc;
   bool vaildDescriptor;
 
   public:
-    Descriptor();
+    TransferDescriptor();
 
-    Descriptor &setSource(void *source);
+    TransferDescriptor &setSource(void *source);
 
-    Descriptor &setDestination(void *destination);
+    TransferDescriptor &setDestination(void *destination);
 
-    Descriptor &setTransferAmount(uint16_t byteCount);
+    TransferDescriptor &setTransferAmount(uint16_t byteCount);
 
-    Descriptor &setDataSize(int16_t byteCount);
+    TransferDescriptor &setDataSize(int16_t byteCount);
 
-    Descriptor &setIncrementConfig(bool incrementSource, bool incrementDestination);
+    TransferDescriptor &setIncrementConfig(bool incrementSource, bool incrementDestination);
 
-    Descriptor &setIncrementModifier(DMA_TARGET target, int16_t incrementModifier);
+    TransferDescriptor &setIncrementModifier(DMA_TARGET target, int16_t incrementModifier);
 
-    Descriptor &setAction(DMA_ACTION action);
+    TransferDescriptor &setAction(DMA_TRANSFER_ACTION action);
 
     void setDefault();
 };
 
-
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> DMA CHANNEL
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 class DMAChannel {
-  private:
-    friend void DMAC_0_Handler(void);
-
-    const int16_t channelIndex;
-    int16_t descriptorCount;
-
-    DMA_TRIGGER externalTrigger;
-    DMACallbackFunction callback;
-    DMA_ERROR currentError;
-
-    volatile bool swPendFlag;
-    volatile bool swTriggerFlag;
-    volatile bool transferErrorFlag;
-    volatile bool suspendFlag;
-    volatile int16_t currentDescriptor;
-
   public:
+    const int16_t channelIndex;
 
-    bool setDescriptors(Descriptor **descriptorArray, int16_t count, bool loop);
+    bool setDescriptors(TransferDescriptor **descriptorArray, int16_t count, 
+      bool loop, bool allocateDescriptor, bool preserveCurrentIndex);
 
-    bool setDescriptor(Descriptor *descriptor, bool loop);
+    bool setDescriptor(TransferDescriptor *descriptor, bool loop);
 
     bool trigger();
 
@@ -93,9 +93,15 @@ class DMAChannel {
 
     bool enable();
 
-    bool enableTrigger();
+    bool getEnabled();
 
-    bool disableTrigger();
+    bool reset(bool blocking);
+
+    bool queue(int16_t descriptorIndex);
+
+    void enableTrigger();
+
+    void disableTrigger();
 
     bool getTriggerEnabled();
 
@@ -103,7 +109,7 @@ class DMAChannel {
 
     bool isBusy();
 
-    int16_t getCurrentDescriptor();
+    int16_t getWritebackIndex();
 
     int16_t getPending();
 
@@ -111,21 +117,64 @@ class DMAChannel {
 
     DMA_STATUS getStatus();
 
+    int16_t getOwnerID();
+
     struct ChannelSettings {
-      public:
+      
+        ChannelSettings &setTransferThreshold(int16_t elements);
 
+        ChannelSettings &setBurstLength(int16_t elements);
 
-      protected:
-      friend DMAChannel;
-      DMAChannel *super;  
-      explicit ChannelSettings(DMAChannel *super);
-    };
+        ChannelSettings &setTriggerAction(DMA_TRIGGER_ACTION action);
+
+        ChannelSettings &setStandbyConfig(bool enabledDurringStandby);
+
+        ChannelSettings &setPriorityLevel(int16_t priorityLevel);
+
+        ChannelSettings &setCallbackFunction(DMACallbackFunction callback);
+        
+        void removeCallbackFunction();
+
+        ChannelSettings &setExternalTrigger(DMA_TRIGGER trigger);
+
+        void setDefault();
+
+      private:
+        friend DMAChannel;
+        DMAChannel *super;  
+        explicit ChannelSettings(DMAChannel *super);
+
+    }settings{this};
 
     private:
+      friend void DMAC_0_Handler(void);
+      friend DMAUtility;
+
+      //// GENERL FIELDS ////
+      int16_t descriptorCount;
+      bool descriptorsAllocated;
+
+      //// DMA UTIL VALUES //// 
+      bool allocated;
+      int16_t ownerID;
+
+      //// FLAGS ////
+      bool externalTriggerEnabled;
+      volatile DMA_ERROR currentError;
+      volatile bool swPendFlag;
+      volatile bool swTriggerFlag;
+      volatile bool transferErrorFlag;
+      volatile bool suspendFlag;
+      volatile int16_t currentDescriptor;
+
+      ///// SETTINGS ////
+      DMA_TRIGGER externalTrigger;
+      DMACallbackFunction callback;
+
 
       DMAChannel(int16_t channelIndex);
+
+      void init(int16_t ownerID);
     
       void clearDescriptors();
-
-
 };

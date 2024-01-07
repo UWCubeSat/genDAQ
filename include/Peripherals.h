@@ -8,65 +8,109 @@
 #include <SERCOM.h>
 #include <wiring_private.h>
 
-#include <GlobalUtils.h>
+#include <GlobalTools.h>
 #include <GlobalDefs.h>
+#include <DMAUtility.h>
 
-int32_t referenceMillis = 0;
+class IO;
+class I2CSerial;
+class SPIBus;
+class UARTBus;
+class AnalogPin;
+class DigitalPin;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-///// SECTION -> I2C SENSOR
+///// SECTION -> PERIPHERAL MANAGER CLASS (SINGLETON)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-inline int16_t getInstruction(const uint8_t *instructionArray, const uint8_t value, 
-  const int16_t maxIndex);
+class IOManager_ {
+  friend I2CSerial;
 
+  public:
 
+    IO *getActiveIO(int16_t IOID); 
 
-class Peripheral {
+  private:
+    IOManager_() {}
+    static uint32_t referenceMillis;
+    IO *activeIO[IO_MAX_INSTANCES];
+
+    void abort(I2CSerial *instance);
+    void abort(SPIBus *instance);
+
+};
+extern IOManager_ &IOManager;
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> SERIAL I2C PERIPHERAL
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+class IO {
+  public:
+    IO() {}
+
+    int16_t getBaseIOID();
+    
+    IO_TYPE getBaseType();
+
+  protected:
+    int16_t IOID;
+    IO_TYPE baseType = TYPE_UNKNOWN;
 };
 
-class I2CBus : public Peripheral {
+class I2CSerial : public IO {
   public:
-    I2CBus(Sercom *s, SERCOM *sercom, uint8_t SDA, uint8_t SCL);
+    I2CSerial(int16_t sercomNum, uint8_t SDA, uint8_t SCL, int16_t IOID);
 
-     int16_t collectData(const uint32_t dataBufferAddr);
+    ~I2CSerial(); // TO DO
+    
+    bool readRegister(uint8_t deviceAddr, uint16_t registerAddr, bool reg16, int16_t readCount, 
+      void *destinationArray);
 
-     class I2CSettings {
+    bool writeRegister(uint8_t deviceAddr, uint16_t registerAddr, bool reg16, uint8_t *writeData, 
+      int16_t writeCount, void *sourceArray);
+
+    bool readComplete();
+
+    bool writeComplete();
+
+    class I2CSettings { // TO DO
       public:
 
         void setDefault();
 
+        bool setBaudrate(int32_t buadrate);
+
       protected:
-        friend I2CBus;
-        I2CBus *super;
-        explicit I2CSettings(I2CBus *super);
+        friend I2CSerial;
+        I2CSerial *super;
+        explicit I2CSettings(I2CSerial *super);
 
     } settings{this};
 
   protected:
 
-    void initI2C();
+    bool init();
 
-    struct I2CDevice {
-      uint8_t addr;
-      uint8_t regCount;
-      uint8_t *regAddrArray;
-      uint8_t *regCountArray;
-    };
+    bool initDMA();
+
+    void exit();
 
   private:
-    //// FIELDS ////
+    //// PROPERTIES ////
     const uint8_t SDA;
     const uint8_t SCL;
-    SERCOM *sercom;
-    Sercom *s;
-
-    I2CDevice *deviceArray;
-    int16_t deviceCount;
-    ERROR_ID currentError;
-
+    int16_t sercomNum;
+    Sercom *s;                      // Dont Delete
+    DMAChannel *readChannel;        // Dealloc using DMAUtil
+    DMAChannel *writeChannel;       // Dealloc using DMAUtil
+    TransferDescriptor *readDesc;   // Delete
+    TransferDescriptor *writeDesc;  // Delete
+    
+    //// SETTINGS ////
     int32_t baudrate;
-    int16_t cycles;
+    volatile bool writeComplete;
+    volatile bool readComplete;
 };
 
 
@@ -80,14 +124,14 @@ class I2CBus : public Peripheral {
 
 
 
-class SPIBus : public Peripheral {
+class SPIBus : public IO {
 
 
 
 };
 
 
-class SerialBus : public Peripheral {
+class SerialBus : public IO {
 
 
 
