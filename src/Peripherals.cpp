@@ -41,6 +41,21 @@ void I2CInterruptHandler(DMA_CALLBACK_REASON reason, DMAChannel &channel,
 I2CSerial::I2CSerial(int16_t sercomNum, uint8_t SDA, uint8_t SCL, int16_t IOID) 
   : SDA(SDA), SCL(SCL) {
 
+  // Set default fields
+  Sercom *s = nullptr;                   
+  readChannel = nullptr;       
+  writeChannel = nullptr;      
+  readDesc = nullptr;  
+  writeDesc = nullptr;
+  bool reg16 = false;
+
+  registerAddr[2] = { 0 };
+  uint8_t deviceAddr;
+
+  previousRequest = 0;
+  currentStatus = I2C_IDLE;
+  currentError = false;
+
   // Init derived type & ID in base class
   baseType = TYPE_I2CSERIAL;
   this->IOID = IOID;
@@ -61,6 +76,20 @@ I2CSerial::I2CSerial(int16_t sercomNum, uint8_t SDA, uint8_t SCL, int16_t IOID)
 
 
 bool I2CSerial::requestRegister(uint8_t deviceAddr, uint16_t registerAddr, bool reg16) {
+
+  // Update state & check for error
+  if (currentStatus != I2C_IDLE) {
+    if (s->I2CM.STATUS.bit.BUSSTATE == 1) {
+      if (currentStatus != I2C_ERROR) {
+        return false;
+      } else {
+        currentStatus == I2C_IDLE;
+      }
+    } else if (s->I2CM.STATUS.bit.BUSSTATE == 0){     //////// NEEDS TO BE CHANGED ....
+      ErrorSys.throwError(ERROR_I2C_BUS_OTHER);
+    }
+  }
+  // Save the device address & register length
   this->deviceAddr = deviceAddr;
   this->reg16 = reg16;
   int16_t regAddrLength = 1 + (int16_t)reg16; 
@@ -77,17 +106,6 @@ bool I2CSerial::requestRegister(uint8_t deviceAddr, uint16_t registerAddr, bool 
     writeDesc->setIncrementConfig(false, false);
   }
 
-  // Is the bus busy?
-  if (s->I2CM.STATUS.bit.BUSSTATE == 3) {
-    ErrorSys.throwError(ERROR_I2C_BUS_BUSY);
-    return false;
-
-  // Has an interrupt set the error flag?  
-  } else if (currentError != ERROR_NONE) {
-    ErrorSys.throwError(ERROR_I2C_OTHER);
-    currentError = ERROR_NONE;
-  }
-
   // Set up DMA to write register addr
   writeDesc->setTransferAmount(regAddrLength);
   writeDesc->setSource((uint32_t)registerAddr, true);                         
@@ -96,18 +114,27 @@ bool I2CSerial::requestRegister(uint8_t deviceAddr, uint16_t registerAddr, bool 
   writeChannel->enableExternalTrigger();
   writeChannel->enable();
 
-
+  // Set up the I2C module
   s->I2CM.ADDR.bit.LENEN = 1;                              // Ensure length specifier is enabled (for DMA)
   s->I2CM.ADDR.reg |= SERCOM_I2CM_ADDR_LEN(regAddrLength)  // Set the addr length & place addr into "ADDR" reg
     | SERCOM_I2CM_ADDR_ADDR(deviceAddr << 1 | 0);          // NOTE: 0 LSB indicates a "write" message
   while(s->I2CM.SYNCBUSY.bit.SYSOP);                       // Wait for sync
 
+  // Change status
+  currentStatus = I2C_REQUEST_BUSY;
+  return true;
+}
 
-  ///////////// WAIT FOR ADDRESS MATCH FLAG IN INTERRUPT -> THAT IT WAS TRIGGERS DMA WRITE
+
+bool I2CSerial::readData(int16_t readCount, void *dataDestination) {
+  // Ensure correct state
+
+  
 
 }
 
-bool I2CSerial::readData(int16_t readCount, void *dataDestination) {
+bool I2CSerial::requestReady() {
+
 
 }
 
@@ -150,7 +177,7 @@ bool I2CSerial::init() {
   s->I2CM.CTRLB.bit.SMEN = 1;                // Enable "smart" mode -> Auto sends ACK on data read
   s->I2CM.BAUD.bit.BAUD                      // Calculate & set baudrate 
     = SERCOM_FREQ_REF / (2 * baudrate) - 7;  
-  s->I2CM.INTENSET.bit.ERROR = 1;            // Enable error interrupt
+  s->I2CM.INTENSET.bit.ERROR = 1;            // Enable error interrupt -> Other interrupt enabled by settings
 
   // Re-enable I2CSerial module
   s->I2CM.CTRLA.bit.ENABLE = 1;
@@ -234,6 +261,15 @@ void I2CSerial::exit() {
   // Clear pending interrupts & disable them
   NVIC_ClearPendingIRQ(SERCOM_REF[sercomNum].baseIRQ);
   NVIC_DisableIRQ(SERCOM_REF[sercomNum].baseIRQ);
+}
+
+
+void I2CSerial::resetFields() {
+
+}
+
+I2C_STATUS I2CSerial::updateState() {
+
 }
 
 

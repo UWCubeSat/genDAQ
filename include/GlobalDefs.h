@@ -66,6 +66,9 @@ enum ASSERT_ID : uint8_t {
 #define DMA_DEFAULT_RUN_STANDBY 1
 #define DMA_DEFAULT_PRIORITY_LVL 1
 
+typedef void (*DMACallbackFunction)(DMA_CALLBACK_REASON reason, DMAChannel &source, 
+int16_t descriptorIndex, int16_t currentTrigger, DMA_ERROR error);
+
 enum DMA_TARGET : uint8_t {
   SOURCE,
   DESTINATION
@@ -206,6 +209,8 @@ enum IO_TYPE {
   TYPE_I2CSERIAL
 };
 
+/////////////////////////////////////////// I2C SERIAL ////////////////////////////////////////////
+
 #define I2C_IRQ_PRIORITY 1
 #define I2C_DEFAULT_BAUDRATE 100000
 #define I2CBUS_CACHE_SIZE 64
@@ -224,6 +229,17 @@ enum IO_TYPE {
 #define I2C_WRITECHANNEL_TRIGGERACTION ACTION_TRANSMIT_BURST
 #define I2C_WRITECHANNEL_BURSTLENGTH 1
 #define I2C_WRITECHANNEL_STANDBYCONFIG false
+
+enum I2C_STATUS : uint8_t {
+  I2C_IDLE,
+  I2C_REQUEST_BUSY,
+  I2C_REQUEST_COMPLETE,
+  I2C_WRITE_BUSY,
+  I2C_READ_BUSY,
+  I2C_ERROR
+};
+
+typedef void (*I2CCallbackFunction)(I2CSerial &sourceInstance, I2C_STATUS currentStatus);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> SERCOM

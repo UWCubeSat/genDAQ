@@ -71,11 +71,11 @@ class I2CSerial : public IO {
     bool writeData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16, uint8_t *writeData, 
       int16_t writeCount, void *sourceArray);
 
-    bool requestComplete();
+    bool requestReady();
 
-    bool readComplete();
+    bool readReady();
 
-    bool writeComplete();
+    bool writeReady();
 
     class I2CSettings { // TO DO
       public:
@@ -99,6 +99,10 @@ class I2CSerial : public IO {
 
     void exit();
 
+    void resetFields();
+
+    I2C_STATUS updateStatus();
+
   private:
     //// PROPERTIES ////
     const uint8_t SDA;
@@ -115,11 +119,15 @@ class I2CSerial : public IO {
     uint8_t registerAddr[2];
     uint8_t deviceAddr;
 
+    //// FLAGS ////
+    int16_t lastRequest;
+    I2C_STATUS currentStatus; 
+    bool currentError;
+    volatile bool transferComplete;
+
     //// SETTINGS ////
+    I2CCallbackFunction *callback;
     int32_t baudrate;
-    volatile bool writeComplete;
-    volatile bool readComplete;
-    volatile ERROR_ID currentError;
 };
 
 
