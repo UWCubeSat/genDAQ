@@ -63,12 +63,15 @@ class I2CSerial : public IO {
     I2CSerial(int16_t sercomNum, uint8_t SDA, uint8_t SCL, int16_t IOID);
 
     ~I2CSerial(); // TO DO
-    
-    bool readRegister(uint8_t deviceAddr, uint16_t registerAddr, bool reg16, int16_t readCount, 
-      void *destinationArray);
 
-    bool writeRegister(uint8_t deviceAddr, uint16_t registerAddr, bool reg16, uint8_t *writeData, 
+    bool requestRegister(uint8_t deviceAddr, uint16_t registerAddr, bool reg16);
+    
+    bool readData(int16_t readCount, void *dataDestination);
+
+    bool writeData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16, uint8_t *writeData, 
       int16_t writeCount, void *sourceArray);
+
+    bool requestComplete();
 
     bool readComplete();
 
@@ -106,11 +109,17 @@ class I2CSerial : public IO {
     DMAChannel *writeChannel;       // Dealloc using DMAUtil
     TransferDescriptor *readDesc;   // Delete
     TransferDescriptor *writeDesc;  // Delete
-    
+
+    //// CACHE ////
+    uint8_t registerAddr[2];
+    uint8_t deviceAddr;
+    bool reg16;
+
     //// SETTINGS ////
     int32_t baudrate;
     volatile bool writeComplete;
     volatile bool readComplete;
+    volatile ERROR_ID currentError;
 };
 
 

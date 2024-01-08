@@ -45,8 +45,12 @@ extern DMAUtility &DMA;
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 struct TransferDescriptor {
-  DmacDescriptor desc;
-  bool vaildDescriptor;
+  private:
+    friend DMAChannel;
+    DmacDescriptor desc;
+    DmacDescriptor *currentDesc;
+    int16_t validCount;
+    bool bind;
 
   public:
     TransferDescriptor();
@@ -77,9 +81,11 @@ class DMAChannel {
     const int16_t channelIndex;
 
     bool setDescriptors(TransferDescriptor **descriptorArray, int16_t count, 
-      bool loop, bool allocateDescriptor, bool preserveCurrentIndex);
+      bool loop, bool preserveCurrentIndex);
 
     bool setDescriptor(TransferDescriptor *descriptor, bool loop);
+
+    bool replaceDescriptor(TransferDescriptor *updatedDescriptor, int16_t descriptorIndex);
 
     bool trigger();
 
@@ -99,15 +105,19 @@ class DMAChannel {
 
     bool queue(int16_t descriptorIndex);
 
-    void enableTrigger();
+    bool enableExternalTrigger();
 
-    void disableTrigger();
+    bool disableExternalTrigger();
 
-    bool getTriggerEnabled();
+    bool getExternalTriggerEnabled();
 
     void clear();
 
     bool isBusy();
+
+    bool setDescriptorValid(int16_t descriptorIndex, bool valid);
+
+    bool getDescriptorValid(int16_t descriptoerIndex);
 
     int16_t getWritebackIndex();
 
@@ -137,6 +147,8 @@ class DMAChannel {
 
         ChannelSettings &setExternalTrigger(DMA_TRIGGER trigger);
 
+        void removeExternalTrigger();
+
         void setDefault();
 
       private:
@@ -152,7 +164,6 @@ class DMAChannel {
 
       //// GENERL FIELDS ////
       int16_t descriptorCount;
-      bool descriptorsAllocated;
 
       //// DMA UTIL VALUES //// 
       bool allocated;
@@ -171,6 +182,7 @@ class DMAChannel {
       DMA_TRIGGER externalTrigger;
       DMACallbackFunction callback;
 
+      DmacDescriptor *getDescriptor(int16_t descriptorIndex);
 
       DMAChannel(int16_t channelIndex);
 

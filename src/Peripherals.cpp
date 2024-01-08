@@ -60,9 +60,51 @@ I2CSerial::I2CSerial(int16_t sercomNum, uint8_t SDA, uint8_t SCL, int16_t IOID)
 }
 
 
-bool I2CSerial::readRegister(uint8_t deviceAddr, uint16_t registerAddr, bool reg16, 
-  int16_t readCount, void *dataDestination) {
+bool I2CSerial::requestRegister(uint8_t deviceAddr, uint16_t registerAddr, bool reg16) {
+  this->deviceAddr = deviceAddr;
+  this->reg16 = reg16;
+  int16_t regAddrLength = 1 + (int16_t)reg16; 
 
+  if (reg16) { // Configure DMA and I2C peripheral to send 2 bytes
+    this->registerAddr[0] = (uint8_t)(registerAddr >> 8);
+    this->registerAddr[1] = (uint8_t)(registerAddr & UINT8_MAX);
+    writeDesc->setTransferAmount(2);
+    writeDesc->setIncrementConfig(true, true);
+  
+  } else { // Configure DMA and I2C peripheral to send 1 byte
+    this->registerAddr[0] = registerAddr;
+    writeDesc->setTransferAmount(1);
+    writeDesc->setIncrementConfig(false, false);
+  }
+
+  // Is the bus busy?
+  if (s->I2CM.STATUS.bit.BUSSTATE == 3) {
+    ErrorSys.throwError(ERROR_I2C_BUS_BUSY);
+    return false;
+
+  // Has an interrupt set the error flag?  
+  } else if (currentError != ERROR_NONE) {
+    ErrorSys.throwError(ERROR_I2C_OTHER);
+    currentError = ERROR_NONE;
+  }
+
+  // Set up DMA to write register addr
+  writeChannel->updateDescriptor();
+  writeChannel->enableExternalTrigger();
+  writeChannel->enable();
+
+
+  s->I2CM.ADDR.bit.LENEN = 1;                             // Ensure length specifier is enabled (for DMA)
+  s->I2CM.ADDR.reg |= SERCOM_I2CM_ADDR_LEN(regAddrLength)  // Set the addr length & place addr into "ADDR" reg
+    | SERCOM_I2CM_ADDR_ADDR(deviceAddr << 1 | 0);         // NOTE: 0 LSB indicates a "write" message
+  while(s->I2CM.SYNCBUSY.bit.SYSOP);                      // Wait for sync
+
+
+  ///////////// WAIT FOR ADDRESS MATCH FLAG IN INTERRUPT -> THAT IT WAS TRIGGERS DMA WRITE
+
+}
+
+bool I2CSerial::readData(int16_t readCount, void *dataDestination) {
 
 }
 
@@ -161,10 +203,6 @@ bool I2CSerial::initDMA() {
     .setStandbyConfig(I2C_READCHANNEL_STANDBYCONFIG)
     .setExternalTrigger((DMA_TRIGGER)SERCOM_REF[sercomNum].DMAWriteTrigger);
 
-  // Enable descriptors
-  readChannel->enable();
-  writeChannel->enable();
-  
   return true;
 }
 
