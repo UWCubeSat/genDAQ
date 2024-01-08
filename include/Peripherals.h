@@ -109,11 +109,11 @@ class I2CSerial : public IO {
     DMAChannel *writeChannel;       // Dealloc using DMAUtil
     TransferDescriptor *readDesc;   // Delete
     TransferDescriptor *writeDesc;  // Delete
+    bool reg16;
 
-    //// CACHE ////
+    //// CACHE //// -> To be accessed by DMA
     uint8_t registerAddr[2];
     uint8_t deviceAddr;
-    bool reg16;
 
     //// SETTINGS ////
     int32_t baudrate;

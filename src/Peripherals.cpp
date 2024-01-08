@@ -89,15 +89,18 @@ bool I2CSerial::requestRegister(uint8_t deviceAddr, uint16_t registerAddr, bool 
   }
 
   // Set up DMA to write register addr
-  writeChannel->updateDescriptor();
+  writeDesc->setTransferAmount(regAddrLength);
+  writeDesc->setSource((uint32_t)registerAddr, true);                         
+  writeDesc->setDestination((uint32_t)&s->I2CM.DATA.reg, false); //////// ADDRESSes MAY NEED TO BE CORRECTED -> THESE COULD BE ERROR...
+  writeChannel->settings.setTriggerAction(ACTION_TRANSMIT_ALL);
   writeChannel->enableExternalTrigger();
   writeChannel->enable();
 
 
-  s->I2CM.ADDR.bit.LENEN = 1;                             // Ensure length specifier is enabled (for DMA)
+  s->I2CM.ADDR.bit.LENEN = 1;                              // Ensure length specifier is enabled (for DMA)
   s->I2CM.ADDR.reg |= SERCOM_I2CM_ADDR_LEN(regAddrLength)  // Set the addr length & place addr into "ADDR" reg
-    | SERCOM_I2CM_ADDR_ADDR(deviceAddr << 1 | 0);         // NOTE: 0 LSB indicates a "write" message
-  while(s->I2CM.SYNCBUSY.bit.SYSOP);                      // Wait for sync
+    | SERCOM_I2CM_ADDR_ADDR(deviceAddr << 1 | 0);          // NOTE: 0 LSB indicates a "write" message
+  while(s->I2CM.SYNCBUSY.bit.SYSOP);                       // Wait for sync
 
 
   ///////////// WAIT FOR ADDRESS MATCH FLAG IN INTERRUPT -> THAT IT WAS TRIGGERS DMA WRITE
@@ -202,6 +205,10 @@ bool I2CSerial::initDMA() {
     .setTriggerAction(I2C_READCHANNEL_TRIGGERACTION)
     .setStandbyConfig(I2C_READCHANNEL_STANDBYCONFIG)
     .setExternalTrigger((DMA_TRIGGER)SERCOM_REF[sercomNum].DMAWriteTrigger);
+
+  // Add descriptors to channels (bind & loop them)
+  readChannel->setDescriptor(readDesc, true, true);
+  writeChannel->setDescriptor(writeDesc, true, true);
 
   return true;
 }

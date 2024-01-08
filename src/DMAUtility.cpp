@@ -217,55 +217,71 @@ void DMAC_0_Handler(void) {
 
 TransferDescriptor::TransferDescriptor () {
   currentDesc = &desc;
-  bound = false;
+  baseSourceAddr = 0;
+  baseDestAddr = 0;
+  primaryBound = false;
   validCount = 0;
   setDefault();
 }
 
-TransferDescriptor &TransferDescriptor::setSource(void *sourcePointer) {
-  if (sourcePointer == nullptr) {
-    // => ASSERT GOES HERE
-  } else {
-    uint32_t startAddress = (uint32_t)sourcePointer;
-    uint32_t targAddress = 0;
+TransferDescriptor &TransferDescriptor::setSource(uint32_t sourceAddr,
+  bool correctAddress = true) {
+  if (sourceAddr == 0) return *this;
+  if (correctAddress) {
+    baseSourceAddr = sourceAddr;
     if (currentDesc->BTCTRL.bit.STEPSEL && currentDesc->BTCTRL.bit.SRCINC) {
-      targAddress = startAddress + (currentDesc->BTCNT.bit.BTCNT 
+      currentDesc->SRCADDR.bit.SRCADDR = sourceAddr + (currentDesc->BTCNT.bit.BTCNT 
         * (currentDesc->BTCTRL.bit.BEATSIZE + 1) 
         * (1 << currentDesc->BTCTRL.bit.STEPSIZE)); 
     } else {
-      targAddress = startAddress + (currentDesc->BTCNT.bit.BTCNT
+      currentDesc->SRCADDR.bit.SRCADDR = sourceAddr + (currentDesc->BTCNT.bit.BTCNT
         * (currentDesc->BTCTRL.bit.BEATSIZE + 1));
     }   
-    currentDesc->SRCADDR.bit.SRCADDR = targAddress;
+  } else {
+    currentDesc->SRCADDR.bit.SRCADDR = sourceAddr;
   }
   validCount++;
   if (validCount == 3) currentDesc->BTCTRL.bit.VALID = 1;
   return *this;
 }
 
-TransferDescriptor &TransferDescriptor::setDestination(void *destinationPointer) {
-  if (destinationPointer == nullptr) {
-    // => ASSERT GOES HERE
-  } else {
-    uint32_t startAddress = (uint32_t)destinationPointer;
-    uint32_t targAddress = 0;
+TransferDescriptor &TransferDescriptor::setSource(void *sourcePointer,
+  bool correctAddress = true) {
+  if (sourcePointer == nullptr) return *this;
+  return setSource((uint32_t)sourcePointer, correctAddress);
+}
+
+TransferDescriptor &TransferDescriptor::setDestination(uint32_t destinationAddr, 
+  bool correctAddress = true) {
+  if (destinationAddr == 0) return *this;
+  if (correctAddress) {
+    baseDestAddr = destinationAddr;
     if (!currentDesc->BTCTRL.bit.STEPSEL && currentDesc->BTCTRL.bit.DSTINC) {
-      targAddress = startAddress + (currentDesc->BTCNT.bit.BTCNT
+      currentDesc->DSTADDR.bit.DSTADDR = destinationAddr + (currentDesc->BTCNT.bit.BTCNT
         * (currentDesc->BTCTRL.bit.BEATSIZE + 1)
         * (1 << currentDesc->BTCTRL.bit.STEPSIZE));
     } else {
-      targAddress = startAddress + (currentDesc->BTCNT.bit.BTCNT
+      currentDesc->DSTADDR.bit.DSTADDR = destinationAddr + (currentDesc->BTCNT.bit.BTCNT
         * (currentDesc->BTCTRL.bit.BEATSIZE + 1));
     }
-    currentDesc->DSTADDR.bit.DSTADDR = targAddress;  
+  } else {
+    currentDesc->DSTADDR.bit.DSTADDR = destinationAddr;
   }
   validCount++;
   if (validCount == 3) currentDesc->BTCTRL.bit.VALID = 1;
   return *this;
+}
+
+TransferDescriptor &TransferDescriptor::setDestination(void *destinationPointer,
+  bool correctAddress = true) {
+  if (destinationPointer == nullptr) return *this;
+  return setDestination((uint32_t)destinationPointer, correctAddress);
 }
 
 TransferDescriptor &TransferDescriptor::setTransferAmount(uint16_t byteCount) {
   currentDesc->BTCNT.bit.BTCNT = (uint16_t)byteCount;
+  if (baseDestAddr != 0) setDestination(baseDestAddr, true);
+  if (baseSourceAddr != 0) setSource(baseSourceAddr, true);
   return *this;
 }
 
@@ -281,6 +297,9 @@ TransferDescriptor &TransferDescriptor::setDataSize(int16_t byteCount) {
   }
   validCount++;
   if (validCount == 3) currentDesc->BTCTRL.bit.VALID = 1;
+
+  if (baseDestAddr != 0) setDestination(baseDestAddr, true);
+  if (baseSourceAddr != 0) setSource(baseSourceAddr, true);
   return *this;
 }
 
@@ -295,6 +314,8 @@ TransferDescriptor &TransferDescriptor::setIncrementConfig(bool incrementSource,
   } else {
     currentDesc->BTCTRL.bit.DSTINC = 0;
   }
+  if (baseDestAddr != 0) setDestination(baseDestAddr, true);
+  if (baseSourceAddr != 0) setSource(baseSourceAddr, true);
   return *this;
 }
 
@@ -310,6 +331,8 @@ TransferDescriptor &TransferDescriptor::setIncrementModifier(DMA_TARGET target, 
     }
     currentDesc->BTCTRL.bit.STEPSIZE = modifier;
   }
+  if (baseDestAddr != 0) setDestination(baseDestAddr, true);
+  if (baseSourceAddr != 0) setSource(baseSourceAddr, true);
   return *this;
 }
 
@@ -328,8 +351,27 @@ void TransferDescriptor::setDefault() {
   currentDesc->BTCTRL.bit.STEPSEL = DMA_DEFAULT_STEPSELECTION;
   currentDesc->BTCTRL.bit.STEPSIZE = DMA_DEFAULT_STEPSIZE;
   currentDesc->BTCTRL.bit.VALID = 0;
+  baseSourceAddr = 0;
+  baseDestAddr = 0;
   validCount = 0;
 }
+
+// Link is never unbound -> would take too much mem to save all linked descriptors
+DmacDescriptor *TransferDescriptor::bindLink() { return &desc; }
+
+void TransferDescriptor::bindPrimary(DmacDescriptor *primaryDescriptor) {
+  currentDesc = primaryDescriptor;
+  primaryBound = true;
+}
+
+void TransferDescriptor::unbindPrimary(DmacDescriptor *primaryDescriptor)  {
+  memcpy(&desc, primaryDescriptor, sizeof(DmacDescriptor));
+  primaryBound = false;
+  currentDesc = &desc;
+}
+
+bool TransferDescriptor::isBindable() { return !primaryBound; }
+
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> DMA CHANNEL SETTINGS
@@ -406,24 +448,32 @@ void DMAChannel::ChannelSettings::setDefault() {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 DMAChannel::DMAChannel(int16_t channelIndex) : channelIndex(channelIndex) {
+  descriptorCount = 0;
+  boundPrimary = nullptr;
   allocated = false;
   ownerID = -1;
+  externalTriggerEnabled =false;
+  currentError = DMA_ERROR_NONE;
+  swPendFlag = false;
+  swTriggerFlag = false;
+  transferErrorFlag = false;
+  suspendFlag = false;
+  currentDescriptor = 0;
+  externalTrigger = TRIGGER_SOFTWARE;
+  callback = nullptr;
 }
 
 
 bool DMAChannel::setDescriptors(TransferDescriptor **descriptorArray, int16_t count, 
-  bool loop, bool preserveCurrentIndex) {
+  bool loop, bool bindDescriptors, bool preserveCurrentIndex) {
   DMA_STATUS prevStatus = getStatus();
   int16_t prevWbIndex = getWritebackIndex();
 
   // Check nullptr exceptions
   if (descriptorArray == nullptr) return false;
   for (int16_t i = 0; i < count; i++) {
-
-    // Is specific descriptor array null or already bound (if requested?)
     if (descriptorArray[i] == nullptr
-    ||((uint32_t)descriptorArray[i]->currentDesc != (uint32_t)&descriptorArray[i]->desc
-    && descriptorArray[i]->bind)) {
+    || (bindDescriptors && descriptorArray[i]->isBindable())) {
       return false;
     }
   }
@@ -436,22 +486,23 @@ bool DMAChannel::setDescriptors(TransferDescriptor **descriptorArray, int16_t co
     sizeof(DmacDescriptor));
   currentDescriptor = &primaryDescriptorArray[channelIndex];
 
-  // Do we need to bind first descriptor?
-  if (descriptorArray[0]->bind) {
-    descriptorArray[0]->currentDesc == &primaryDescriptorArray[channelIndex];
+  // Do we need to bind primary descriptor?
+  if (bindDescriptors) {
+    descriptorArray[0]->bindPrimary(&primaryDescriptorArray[channelIndex]);
+    boundPrimary = descriptorArray[0];
   }
 
   // Do we need to link descriptors? -> Iterate through array if so
   if (count > 1) {
     for (int16_t i = 1; i < count; i++) {
+      DmacDescriptor *newDescriptor = nullptr;
 
-      // Alloc new descriptor
-      DmacDescriptor *newDescriptor = new DmacDescriptor;
-      memcpy(newDescriptor, &descriptorArray[i]->desc, sizeof(DmacDescriptor));
-      
-      // Do we need to bind the descriptor?
-      if (descriptorArray[i]->bind) {
-        descriptorArray[i]->currentDesc = newDescriptor; 
+      // If binding descriptor -> dont alloc, otherwise -> alloc
+      if (bindDescriptors) {
+        newDescriptor = descriptorArray[i]->bindLink();
+      } else {
+        newDescriptor = new DmacDescriptor;
+        memcpy(newDescriptor, &descriptorArray[i]->desc, sizeof(DmacDescriptor));
       }
 
       // Link descriptor to next one in array
@@ -479,42 +530,113 @@ bool DMAChannel::setDescriptors(TransferDescriptor **descriptorArray, int16_t co
 }
 
 
-bool DMAChannel::setDescriptor(TransferDescriptor *descriptor, bool loop) {
+bool DMAChannel::setDescriptor(TransferDescriptor *descriptor, bool loop,
+  bool bindDescriptor) {
   TransferDescriptor *descriptorArr[] = { descriptor };
-  return setDescriptors(descriptorArr, 1, loop, false);
+  return setDescriptors(descriptorArr, 1, loop, bindDescriptor, false);
 }
 
 
 bool DMAChannel::replaceDescriptor(TransferDescriptor *updatedDescriptor, 
-  int16_t descriptorIndex) {
+int16_t descriptorIndex, bool bindDescriptor) {
 
   // Check for exceptions
   CLAMP(descriptorIndex, 0, descriptorCount);
-  if (descriptorCount == 0
-  || (updatedDescriptor->bind
-  && (uint32_t)updatedDescriptor->currentDesc == (uint32_t)&updatedDescriptor->desc)) {
+  if (descriptorCount == 0 || (bindDescriptor && updatedDescriptor->isBindable())) {
     return false;
   }
   // Handle cases -> descriptor is primary, or linked...
   if (descriptorIndex == 0) {
-    memcpy(&primaryDescriptorArray[channelIndex], updatedDescriptor,
-      sizeof(DmacDescriptor));
-    
-    // Does descriptor need to be bound to primary?
-    if (updatedDescriptor->bind) {
-      updatedDescriptor->currentDesc = &primaryDescriptorArray[channelIndex];
+    // Unbind current descriptor
+    if (boundPrimary != nullptr) {
+      boundPrimary->unbindPrimary(&primaryDescriptorArray[channelIndex]);
+      boundPrimary = nullptr;
     }
-      
+    // Copy new descriptor into primary slot
+    memcpy(&primaryDescriptorArray[channelIndex], &updatedDescriptor->desc,
+      sizeof(DmacDescriptor));
+
+    // Bind the new primary descriptor (if applicable)
+    if (bindDescriptor) {
+      updatedDescriptor->bindPrimary(&primaryDescriptorArray[channelIndex]);
+    }
   } else {
     DmacDescriptor *targetDescriptor = getDescriptor(descriptorIndex);
-    memcpy(targetDescriptor, updatedDescriptor, sizeof(DmacDescriptor));
+    uint32_t targetLink = targetDescriptor->DESCADDR.bit.DESCADDR;
 
-    // Does descriptor need to be bound? 
-    if (updatedDescriptor->bind) {
-      updatedDescriptor->currentDesc = targetDescriptor;
+    // If binding -> delete target & replace it with updated descriptor (get link), 
+    //else -> copy into & overwrite current target with updated descriptor
+    if (bindDescriptor) {
+      delete targetDescriptor;
+      targetDescriptor = updatedDescriptor->bindLink();
+    } else {
+      memcpy(targetDescriptor, &updatedDescriptor->desc, sizeof(DmacDescriptor));
     }
+    // Link replaced descriptor to next (or not if no link)....
+    targetDescriptor->DESCADDR.bit.DESCADDR = targetLink;
   }
   return true;
+}
+
+
+void DMAChannel::loopDescriptors(bool updateWriteback, bool suspendTransfer = false, 
+  bool blockingSuspend = false) {
+  bool resumeFlag = false;
+  DmacDescriptor *lastDescriptor = getDescriptor(descriptorCount - 1);
+
+  // Is last descriptor already looped? -> If not link last -> primary (first)
+  if (lastDescriptor->DESCADDR.bit.DESCADDR == 0) {
+
+    // Suspend channel -> If specified
+    if (suspendTransfer && !suspendFlag) {
+      suspend(blockingSuspend);
+      resumeFlag = true;
+    }
+    // Link last descriptor
+    lastDescriptor->DESCADDR.bit.DESCADDR
+      = (uint32_t)&primaryDescriptorArray[channelIndex];
+
+    // Does the writeback descriptor also need to be looped? (if applicable)
+    if (writebackDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR == 0
+    && updateWriteback) {
+      writebackDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR
+        = (uint32_t)&primaryDescriptorArray[channelIndex];
+    }
+  }
+  // Resume channel if suspended
+  if (resumeFlag) {
+    resume();
+  }
+} 
+
+
+void DMAChannel::unloopDescriptors(bool updateWriteback, bool suspendTransfer = false, 
+  bool blockingSuspend = false) {
+  bool resumeFlag = false;
+  DmacDescriptor *lastDescriptor = getDescriptor(descriptorCount - 1);
+
+    // Ensure last descriptor looped before unlooping
+  if (lastDescriptor->DESCADDR.bit.DESCADDR != 0) {
+
+    // Suspend channel -> if specified
+    if (suspendTransfer && !suspendFlag) {
+      suspend(blockingSuspend);
+      resumeFlag = true;
+    }
+    // Unlink last descriptor
+    lastDescriptor->DESCADDR.bit.DESCADDR = 0;
+
+    // If writeback = last descriptor -> unloop it aswell (if specified)
+    if (writebackDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR
+        == (uint32_t)&primaryDescriptorArray[channelIndex]
+    && updateWriteback) {
+      writebackDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR = 0;
+    }
+  }
+  // Resume channel (if applicable)
+  if (resumeFlag) {
+    resume();
+  }
 }
 
 
@@ -707,6 +829,8 @@ void DMAChannel::clear() {
 
   clearDescriptors();
 
+  boundPrimary = nullptr;
+
   // Disable the channel and call a soft reset of all registers
   DMAC->Channel[channelIndex].CHCTRLA.bit.ENABLE = 0;
   while(DMAC->Channel[channelIndex].CHCTRLA.bit.ENABLE);
@@ -778,10 +902,17 @@ int16_t DMAChannel::getOwnerID() { return ownerID; }
 
 
 DmacDescriptor *DMAChannel::getDescriptor(int16_t descriptorIndex) {
+  // If target descriptor cached -> use that one
+  if (previousIndex == descriptorIndex) return previousDescriptor;
+
+  // Else iterate through descriptors until at specified index
   DmacDescriptor *currentDescriptor = &primaryDescriptorArray[channelIndex];
   for (int16_t i = 1; i <= descriptorIndex; i++) {
     currentDescriptor = (DmacDescriptor*)currentDescriptor->DESCADDR.bit.DESCADDR;
   } 
+  // Save descriptor & index to cache
+  previousDescriptor = currentDescriptor;
+  previousIndex = descriptorIndex;
   return currentDescriptor;
 }
 
@@ -802,6 +933,7 @@ void DMAChannel::init(int16_t ownerID) {
   currentDescriptor = 0;
   descriptorCount = 0;
   externalTriggerEnabled = false;
+  previousDescriptor = nullptr;
 
   this->ownerID = ownerID;
 
@@ -810,26 +942,34 @@ void DMAChannel::init(int16_t ownerID) {
 }
 
 
-void DMAChannel::clearDescriptors() { ///// NEEDS TO BE UPDATED SO IT NULLIFIES BOUND POINTERS....
+void DMAChannel::clearDescriptors() { ///// NEEDS TO BE UPDATED SO IT NULLIFIES BOUND
   if (descriptorCount > 1) {
+    // If primary is bound -> unbind it
+    if (boundPrimary != nullptr) {
+      boundPrimary->unbindPrimary(&primaryDescriptorArray[channelIndex]);
+      boundPrimary = nullptr;
+    }
+
+    // Get descriptor linked to primary & clear primary using memset
     DmacDescriptor *currentDescriptor 
       = (DmacDescriptor*)primaryDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR;
     memset(&primaryDescriptorArray[channelIndex], 0, sizeof(DmacDescriptor));
 
-      for (int16_t i = 0; i < descriptorCount - 1; i++) {
-        DmacDescriptor *nextDescriptor
-          = (DmacDescriptor*)primaryDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR;
+    for (int16_t i = 0; i < descriptorCount - 1; i++) {
+      DmacDescriptor *nextDescriptor
+        = (DmacDescriptor*)primaryDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR;
 
-          // Delete descriptor & unbind it
-          delete currentDescriptor;
+        // Delete descriptor
+        delete currentDescriptor;
 
-        // Move on to next descriptor
-        currentDescriptor = nextDescriptor;
-      }
-      delete currentDescriptor;
-      currentDescriptor = nullptr;
+      // Move on to next descriptor
+      currentDescriptor = nextDescriptor;
+    }
+    delete currentDescriptor;
+    currentDescriptor = nullptr;
   
   } else if (descriptorCount == 1) {
     memset(&primaryDescriptorArray[channelIndex], 0, sizeof(DmacDescriptor));
   }
+  descriptorCount = 0;
 }
