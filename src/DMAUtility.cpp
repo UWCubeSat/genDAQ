@@ -245,12 +245,6 @@ TransferDescriptor &TransferDescriptor::setSource(uint32_t sourceAddr,
   return *this;
 }
 
-TransferDescriptor &TransferDescriptor::setSource(void *sourcePointer,
-  bool correctAddress = true) {
-  if (sourcePointer == nullptr) return *this;
-  return setSource((uint32_t)sourcePointer, correctAddress);
-}
-
 TransferDescriptor &TransferDescriptor::setDestination(uint32_t destinationAddr, 
   bool correctAddress = true) {
   if (destinationAddr == 0) return *this;
@@ -270,12 +264,6 @@ TransferDescriptor &TransferDescriptor::setDestination(uint32_t destinationAddr,
   validCount++;
   if (validCount == 3) currentDesc->BTCTRL.bit.VALID = 1;
   return *this;
-}
-
-TransferDescriptor &TransferDescriptor::setDestination(void *destinationPointer,
-  bool correctAddress = true) {
-  if (destinationPointer == nullptr) return *this;
-  return setDestination((uint32_t)destinationPointer, correctAddress);
 }
 
 TransferDescriptor &TransferDescriptor::setTransferAmount(uint16_t byteCount) {
@@ -416,6 +404,21 @@ DMAChannel::ChannelSettings &DMAChannel::ChannelSettings::setCallbackFunction(DM
   return *this;
 }
 
+DMAChannel::ChannelSettings &DMAChannel::ChannelSettings::setDescriptorsLooped(bool descriptorsLooped,
+  bool updateWriteback) {
+  
+  // Are descriptors already looped?
+  if (descriptorsLooped != super->descriptorsLooped) {
+    if (descriptorsLooped) {
+      super->loopDescriptors(updateWriteback);
+    } else {
+      super->unloopDescriptors(updateWriteback);
+    } 
+  }
+  super->descriptorsLooped = descriptorsLooped;
+  return *this;
+}
+
 void DMAChannel::ChannelSettings::removeCallbackFunction() {
   super->callback = nullptr;
 }
@@ -441,6 +444,9 @@ void DMAChannel::ChannelSettings::setDefault() {
   DMAC->Channel[super->channelIndex].CHCTRLA.bit.RUNSTDBY = DMA_DEFAULT_RUN_STANDBY;
   super->callback = nullptr;
   super->externalTrigger = DMA_DEFAULT_TRIGGER_SOURCE;
+  if (super->descriptorsLooped && super->descriptorCount != 0) {
+    super->unloopDescriptors(true);
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -454,6 +460,7 @@ DMAChannel::DMAChannel(int16_t channelIndex) : channelIndex(channelIndex) {
   ownerID = -1;
   externalTriggerEnabled =false;
   currentError = DMA_ERROR_NONE;
+  descriptorsLooped = false;
   swPendFlag = false;
   swTriggerFlag = false;
   transferErrorFlag = false;
@@ -461,11 +468,12 @@ DMAChannel::DMAChannel(int16_t channelIndex) : channelIndex(channelIndex) {
   currentDescriptor = 0;
   externalTrigger = TRIGGER_SOFTWARE;
   callback = nullptr;
+  descriptorsLooped = false;
 }
 
 
 bool DMAChannel::setDescriptors(TransferDescriptor **descriptorArray, int16_t count, 
-  bool loop, bool bindDescriptors, bool preserveCurrentIndex) {
+   bool bindDescriptors, bool updateWriteback) {
   DMA_STATUS prevStatus = getStatus();
   int16_t prevWbIndex = getWritebackIndex();
 
@@ -510,7 +518,7 @@ bool DMAChannel::setDescriptors(TransferDescriptor **descriptorArray, int16_t co
       currentDescriptor = newDescriptor;
 
       // If preserve writeback = true -> link writeback to new descriptor @ current index
-      if (preserveCurrentIndex && i == prevWbIndex 
+      if (updateWriteback && i == prevWbIndex 
       && prevStatus != DMA_CHANNEL_ERROR && prevStatus != DMA_CHANNEL_DISABLED
       && writebackDescriptorArray[channelIndex].SRCADDR.bit.SRCADDR | DMAC_SRCADDR_RESETVALUE
         != DMAC_SRCADDR_RESETVALUE) {
@@ -521,7 +529,7 @@ bool DMAChannel::setDescriptors(TransferDescriptor **descriptorArray, int16_t co
     }
   }
   // Link the "current descriptor" to the first one if loop is true
-  if (loop) {
+  if (descriptorsLooped) {
     currentDescriptor->DESCADDR.bit.DESCADDR 
       = (uint32_t)&primaryDescriptorArray[channelIndex];
   }
@@ -530,10 +538,9 @@ bool DMAChannel::setDescriptors(TransferDescriptor **descriptorArray, int16_t co
 }
 
 
-bool DMAChannel::setDescriptor(TransferDescriptor *descriptor, bool loop,
-  bool bindDescriptor) {
+bool DMAChannel::setDescriptor(TransferDescriptor *descriptor, bool bindDescriptor) {
   TransferDescriptor *descriptorArr[] = { descriptor };
-  return setDescriptors(descriptorArr, 1, loop, bindDescriptor, false);
+  return setDescriptors(descriptorArr, 1, bindDescriptor, false);
 }
 
 
@@ -579,64 +586,183 @@ int16_t descriptorIndex, bool bindDescriptor) {
 }
 
 
-void DMAChannel::loopDescriptors(bool updateWriteback, bool suspendTransfer = false, 
-  bool blockingSuspend = false) {
-  bool resumeFlag = false;
-  DmacDescriptor *lastDescriptor = getDescriptor(descriptorCount - 1);
+bool DMAChannel::addDescriptor(TransferDescriptor *descriptor, int16_t descriptorIndex, 
+  bool updateWriteback, bool bindDescriptor = false) {
 
-  // Is last descriptor already looped? -> If not link last -> primary (first)
-  if (lastDescriptor->DESCADDR.bit.DESCADDR == 0) {
+  DmacDescriptor *targetDescriptor = nullptr;
+  DmacDescriptor *previousDescriptor = nullptr;
+  DmacDescriptor *nextDescriptor = nullptr;
 
-    // Suspend channel -> If specified
-    if (suspendTransfer && !suspendFlag) {
-      suspend(blockingSuspend);
-      resumeFlag = true;
+  // Handle exceptions
+  DMA_STATUS currentStatus = getStatus();
+  CLAMP(descriptorIndex, 0, descriptorCount);
+  if (currentStatus == DMA_CHANNEL_ERROR
+  || bindDescriptor && !descriptor->isBindable()) {
+    return false;
+  }
+ 
+  // If no descriptors in list call set descriptor
+  if (descriptorCount == 0) {
+    setDescriptor(descriptor, bindDescriptor);
+    return true;
+
+  // Handle case: descriptor added to primary position
+  } else if (descriptorIndex == 0) {
+
+    // If descriptors looped get last descriptor
+    if (descriptorsLooped) {
+      previousDescriptor = getDescriptor(descriptorCount - 1);
     }
-    // Link last descriptor
-    lastDescriptor->DESCADDR.bit.DESCADDR
-      = (uint32_t)&primaryDescriptorArray[channelIndex];
 
-    // Does the writeback descriptor also need to be looped? (if applicable)
-    if (writebackDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR == 0
-    && updateWriteback) {
-      writebackDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR
+    // If primary bound, unbind & get new bound, linked descriptor
+    if (boundPrimary != nullptr) {
+      boundPrimary->unbindPrimary(&primaryDescriptorArray[channelIndex]);
+      nextDescriptor = boundPrimary->bindLink();
+      boundPrimary = nullptr;
+    
+    // Else -> Copy prev primary into new allocated descriptor
+    } else {
+      nextDescriptor = new DmacDescriptor();
+      memcpy(nextDescriptor, &primaryDescriptorArray[channelIndex],
+        sizeof(DmacDescriptor));
+    }
+
+    // Copy added descriptor into primary slot
+    memcpy(&primaryDescriptorArray[channelIndex], descriptor->currentDesc,
+      sizeof(DmacDescriptor));
+    
+    // If specified: bind added descriptor
+    if (bindDescriptor) {
+      descriptor->bindPrimary(&primaryDescriptorArray[channelIndex]);
+      boundPrimary = descriptor;
+    }
+    targetDescriptor = &primaryDescriptorArray[channelIndex];
+
+    // Link (added) primary descriptor to prev primary descriptor
+    targetDescriptor->DESCADDR.bit.DESCADDR = (uint32_t)&nextDescriptor;
+
+  // Handle case -> descriptor in middle of list or beyond end
+  } else {
+    previousDescriptor = getDescriptor(descriptorIndex - 1);
+    
+    // If bound -> dont alloc, Otherwise alloc new descriptor & copy into it
+    if (bindDescriptor) {
+      targetDescriptor = descriptor->bindLink();
+    } else {
+      targetDescriptor = new DmacDescriptor();
+      memcpy(targetDescriptor, descriptor->currentDesc, sizeof(DmacDescriptor));
+    }
+
+    // If descriptor is being appended -> link only if list is looped
+    if (descriptorIndex == descriptorCount && descriptorsLooped) {
+      targetDescriptor->DESCADDR.bit.DESCADDR 
+        = (uint32_t)&primaryDescriptorArray[channelIndex];
+    
+    // If not appended -> Link added descriptor to previous' next
+    } else if (descriptorIndex != descriptorCount){
+      targetDescriptor->DESCADDR.bit.DESCADDR 
+        = previousDescriptor->DESCADDR.bit.DESCADDR; 
+    }
+    // Link previous descriptor to target (added one)
+    previousDescriptor->DESCADDR.bit.DESCADDR = (uint32_t)targetDescriptor;
+  } 
+
+  // If wb linked to same descriptor as added one, it should be updated (if specified)
+  if (writebackDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR
+    == targetDescriptor->DESCADDR.bit.DESCADDR) {
+    
+    writebackDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR    
+      = (uint32_t)targetDescriptor;
+  }
+  descriptorCount++;
+  return true;
+}
+
+
+bool DMAChannel::removeDescriptor(int16_t descriptorIndex, bool updateWriteback) {
+  // Handle exceptions
+  DMA_STATUS currentStatus = getStatus();
+  CLAMP(descriptorIndex, 0, descriptorCount - 1);
+  if (descriptorCount == 0 || currentStatus == DMA_CHANNEL_ERROR) {
+    return false;
+  }
+
+  DmacDescriptor *nextDescriptor = nullptr;
+  DmacDescriptor *targetDescriptor = nullptr;
+  DmacDescriptor *previousDescriptor = nullptr;
+  uint32_t removedAddr = 0;
+
+  // If removing last descriptor -> clear descriptors instead
+  if (descriptorCount == 1) {
+    clearDescriptors();
+    return true;
+
+  // Handle case -> Removing primary descriptor
+  } else if (descriptorIndex == 0) {
+    nextDescriptor = getDescriptor(1);
+    removedAddr = (uint32_t)&primaryDescriptorArray[channelIndex];
+
+    // Unbind primary descriptor (if applicable)
+    if (boundPrimary != nullptr) {
+      boundPrimary->unbindPrimary(&primaryDescriptorArray[channelIndex]);
+    }
+
+    // Move 2nd descriptor "down" by copying it into primary slot
+    memcpy(&primaryDescriptorArray[channelIndex], nextDescriptor, 
+      sizeof(DmacDescriptor));
+
+    // If descriptors looped -> link last descriptor to new primary
+    if (descriptorsLooped) {
+      previousDescriptor = getDescriptor(descriptorCount - 1);
+      previousDescriptor->DESCADDR.bit.DESCADDR 
         = (uint32_t)&primaryDescriptorArray[channelIndex];
     }
-  }
-  // Resume channel if suspended
-  if (resumeFlag) {
-    resume();
-  }
-} 
 
+  // Else -> Removing either last or middle descriptor
+  } else {
 
-void DMAChannel::unloopDescriptors(bool updateWriteback, bool suspendTransfer = false, 
-  bool blockingSuspend = false) {
-  bool resumeFlag = false;
-  DmacDescriptor *lastDescriptor = getDescriptor(descriptorCount - 1);
+    // Get prev, targ & next if removing descriptor @ end of list.
+    if (descriptorIndex = descriptorCount - 1) {
+      previousDescriptor = getDescriptor(descriptorCount - 2);
+      targetDescriptor = (DmacDescriptor*)previousDescriptor->DESCADDR.bit.DESCADDR;
+      removedAddr = (uint32_t)targetDescriptor;
+      
+      // If looped -> get next (primary) descriptor, else -> leave next as nullptr
+      if (descriptorsLooped) {  
+        nextDescriptor = &primaryDescriptorArray[channelIndex];
+      }
 
-    // Ensure last descriptor looped before unlooping
-  if (lastDescriptor->DESCADDR.bit.DESCADDR != 0) {
-
-    // Suspend channel -> if specified
-    if (suspendTransfer && !suspendFlag) {
-      suspend(blockingSuspend);
-      resumeFlag = true;
+    // Get prev, targ & next if removing descriptor in middle of list.
+    } else {
+      previousDescriptor = getDescriptor(descriptorIndex);
+      targetDescriptor = (DmacDescriptor*)previousDescriptor->DESCADDR.bit.DESCADDR;
+      nextDescriptor = (DmacDescriptor*)targetDescriptor->DESCADDR.bit.DESCADDR;
+      removedAddr = (uint32_t)targetDescriptor;
     }
-    // Unlink last descriptor
-    lastDescriptor->DESCADDR.bit.DESCADDR = 0;
 
-    // If writeback = last descriptor -> unloop it aswell (if specified)
-    if (writebackDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR
-        == (uint32_t)&primaryDescriptorArray[channelIndex]
-    && updateWriteback) {
+    // Delete target descriptor
+    delete targetDescriptor;
+    targetDescriptor = nullptr;
+
+    // If next descriptor is not nullptr -> link prev to it, else -> unlink prev
+    if (nextDescriptor != nullptr) {
+      previousDescriptor->DESCADDR.bit.DESCADDR = (uint32_t)nextDescriptor;
+    } else {
+      previousDescriptor->DESCADDR.bit.DESCADDR = 0;
+    }
+  }
+  // Update writeback descriptor if it links to removed descriptor (if specified)
+  if (updateWriteback && writebackDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR 
+    == removedAddr) {
+    if (nextDescriptor == nullptr) {
       writebackDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR = 0;
+    } else {
+      writebackDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR
+        = (uint32_t)nextDescriptor;
     }
   }
-  // Resume channel (if applicable)
-  if (resumeFlag) {
-    resume();
-  }
+  descriptorCount--;
+  return true;
 }
 
 
@@ -830,6 +956,7 @@ void DMAChannel::clear() {
   clearDescriptors();
 
   boundPrimary = nullptr;
+  descriptorsLooped = false;
 
   // Disable the channel and call a soft reset of all registers
   DMAC->Channel[channelIndex].CHCTRLA.bit.ENABLE = 0;
@@ -972,4 +1099,45 @@ void DMAChannel::clearDescriptors() { ///// NEEDS TO BE UPDATED SO IT NULLIFIES 
     memset(&primaryDescriptorArray[channelIndex], 0, sizeof(DmacDescriptor));
   }
   descriptorCount = 0;
+}
+
+
+void DMAChannel::loopDescriptors(bool updateWriteback) {
+  DmacDescriptor *lastDescriptor = getDescriptor(descriptorCount - 1);
+
+  // Is last descriptor already looped? -> If not link last -> primary (first)
+  if (!descriptorsLooped) {
+    descriptorsLooped = true;
+
+    // Link last descriptor
+    lastDescriptor->DESCADDR.bit.DESCADDR
+      = (uint32_t)&primaryDescriptorArray[channelIndex];
+
+    // Does the writeback descriptor also need to be looped? (if applicable)
+    if (writebackDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR == 0
+    && updateWriteback) {
+      writebackDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR
+        = (uint32_t)&primaryDescriptorArray[channelIndex];
+    }
+  }
+} 
+
+
+void DMAChannel::unloopDescriptors(bool updateWriteback) {
+  DmacDescriptor *lastDescriptor = getDescriptor(descriptorCount - 1);
+
+    // Ensure last descriptor looped before unlooping
+  if (descriptorsLooped) {
+    descriptorsLooped = false;
+
+    // Unlink last descriptor
+    lastDescriptor->DESCADDR.bit.DESCADDR = 0;
+
+    // If writeback = last descriptor -> unloop it aswell (if specified)
+    if (writebackDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR
+        == (uint32_t)&primaryDescriptorArray[channelIndex]
+    && updateWriteback) {
+      writebackDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR = 0;
+    }
+  }
 }

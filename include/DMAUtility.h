@@ -57,10 +57,8 @@ struct TransferDescriptor {
     TransferDescriptor();
 
     TransferDescriptor &setSource(uint32_t sourceAddr, bool correctAddress = true);
-    TransferDescriptor &setSource(void *sourcePointer, bool correctAddress = true);
 
     TransferDescriptor &setDestination(uint32_t destinationAddr, bool correctAddress = true);
-    TransferDescriptor &setDestination(void *destinationPointer, bool correctAddress = true);
 
     TransferDescriptor &setTransferAmount(uint16_t byteCount);
 
@@ -82,7 +80,6 @@ struct TransferDescriptor {
 
     void bindPrimary(DmacDescriptor *primaryDescriptor);
 
-    void unbindLink();
 
     void unbindPrimary(DmacDescriptor *primaryDescriptor);
 };
@@ -96,18 +93,17 @@ class DMAChannel {
     const int16_t channelIndex;
 
     bool setDescriptors(TransferDescriptor **descriptorArray, int16_t count, 
-      bool loop = true, bool bindDescriptors = false, bool preserveCurrentIndex = false);
+      bool bindDescriptors = false, bool udpateWriteback = false);  // LIKELY NEEDS SUSPEND OPTION....
 
-    bool setDescriptor(TransferDescriptor *descriptor, bool loop = false, bool bindDescriptor = false);
+    bool setDescriptor(TransferDescriptor *descriptor, bool bindDescriptor = false);
 
     bool replaceDescriptor(TransferDescriptor *updatedDescriptor, int16_t descriptorIndex,
       bool bindDescriptor = false);
 
-    void loopDescriptors(bool updateWriteback, bool suspendTransfer = false, 
-      bool blockingSuspend = false);
+    bool addDescriptor(TransferDescriptor *descriptor, int16_t descriptorIndex, // NOT DONE
+      bool bindDescriptor = false, bool updateWriteback);
 
-    void  unloopDescriptors(bool updateWriteback, bool suspendTransfer = false, 
-      bool blockingSuspend = false);
+    bool removeDescriptor(int16_t descriptorIndex, bool updateWriteback); // NOT DONE
 
     bool trigger();
 
@@ -139,7 +135,13 @@ class DMAChannel {
 
     bool setDescriptorValid(int16_t descriptorIndex, bool valid);
 
+    bool setAllValid(bool valid); // NOT DONE
+
     bool getDescriptorValid(int16_t descriptoerIndex);
+
+    bool setWritebackValid(bool valid);  // NOT DONE
+
+    bool getWritebackValid(); // NOT DONE
 
     int16_t getWritebackIndex();
 
@@ -164,6 +166,8 @@ class DMAChannel {
         ChannelSettings &setPriorityLevel(int16_t priorityLevel);
 
         ChannelSettings &setCallbackFunction(DMACallbackFunction callback);
+
+        ChannelSettings &setDescriptorsLooped(bool descriptorsLooped, bool updateWriteback);
         
         void removeCallbackFunction();
 
@@ -190,7 +194,6 @@ class DMAChannel {
       int16_t previousIndex;              // For iteration optimization
       DmacDescriptor *previousDescriptor; // For iteration optimization
 
-
       //// DMA UTIL VALUES //// 
       bool allocated;
       int16_t ownerID;
@@ -207,12 +210,17 @@ class DMAChannel {
       ///// SETTINGS ////
       DMA_TRIGGER externalTrigger;
       DMACallbackFunction callback;
+      bool descriptorsLooped;
 
       DmacDescriptor *getDescriptor(int16_t descriptorIndex);
 
       DMAChannel(int16_t channelIndex);
 
       void init(int16_t ownerID);
+
+      void loopDescriptors(bool updateWriteback);
+
+      void  unloopDescriptors(bool updateWriteback);
     
       void clearDescriptors();
 };

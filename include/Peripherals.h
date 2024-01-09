@@ -64,18 +64,14 @@ class I2CSerial : public IO {
 
     ~I2CSerial(); // TO DO
 
-    bool requestRegister(uint8_t deviceAddr, uint16_t registerAddr, bool reg16);
+    bool requestData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16);
     
-    bool readData(int16_t readCount, void *dataDestination);
+    bool readData(int16_t bytes, uint32_t datadestinationAddr);
 
-    bool writeData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16, uint8_t *writeData, 
-      int16_t writeCount, void *sourceArray);
+    bool writeData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16, 
+      int16_t writeCount, uint32_t dataSourceAddr);
 
-    bool requestReady();
-
-    bool readReady();
-
-    bool writeReady();
+    bool dataReady();
 
     class I2CSettings { // TO DO
       public:
@@ -101,7 +97,7 @@ class I2CSerial : public IO {
 
     void resetFields();
 
-    I2C_STATUS updateStatus();
+    I2C_STATUS updateStatus(int16_t newLastRequest);
 
   private:
     //// PROPERTIES ////
@@ -113,6 +109,7 @@ class I2CSerial : public IO {
     DMAChannel *writeChannel;       // Dealloc using DMAUtil
     TransferDescriptor *readDesc;   // Delete
     TransferDescriptor *writeDesc;  // Delete
+    TransferDescriptor *regDesc;
     bool reg16;
 
     //// CACHE //// -> To be accessed by DMA
@@ -120,10 +117,9 @@ class I2CSerial : public IO {
     uint8_t deviceAddr;
 
     //// FLAGS ////
-    int16_t lastRequest;
-    I2C_STATUS currentStatus; 
-    bool currentError;
-    volatile bool transferComplete;
+    volatile bool criticalError; // Set by I2C interrupt when error detected
+    volatile uint8_t busyOpp;    // Reset by DMA interrupt when transfer complete
+    bool dataRequested;          // Set when request data is called successfully
 
     //// SETTINGS ////
     I2CCallbackFunction *callback;
