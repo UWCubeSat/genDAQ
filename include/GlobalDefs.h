@@ -28,9 +28,13 @@
 
 enum ERROR_ID : uint8_t {
   ERROR_NONE,
+  ERROR_UNKNOWN,
   ERROR_SETTINGS_OOB,
   ERROR_SETTINGS_INVALID,
-  ERROR_SETTINGS_OTHER
+  ERROR_SETTINGS_OTHER,
+  ERROR_DMA_TRANSFER,
+  ERROR_DMA_CRC,
+  ERROR_DMA_DESCRIPTOR
 };
 
 enum ASSERT_ID : uint8_t {
@@ -110,14 +114,6 @@ enum DMA_STATUS : uint8_t {
   DMA_CHANNEL_ERROR,
   DMA_CHANNEL_IDLE,
   DMA_CHANNEL_DISABLED
-};
-
-enum DMA_ERROR : uint8_t {
-  DMA_ERROR_NONE,
-  DMA_ERROR_TRANSFER,
-  DMA_ERROR_CRC,
-  DMA_ERROR_DESCRIPTOR,
-  DMA_ERROR_UNKNOWN
 };
 
 enum DMA_CALLBACK_REASON : uint8_t {
@@ -226,10 +222,15 @@ enum CRC_MODE : uint8_t {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #define IO_MAX_INSTANCES 10
+#define IO_MAX_SERCOM 5
 
 enum IO_TYPE {
   TYPE_UNKNOWN,
-  TYPE_I2CSERIAL
+  TYPE_I2CSERIAL,
+  TYPE_SPISERIAL,
+  TYPE_UARTSERIAL,
+  TYPE_ANALOGPIN,
+  TYPE_DIGITALPIN
 };
 
 /////////////////////////////////////////// I2C SERIAL ////////////////////////////////////////////
@@ -242,12 +243,17 @@ enum IO_TYPE {
 #define I2C_READ_TAG 1
 #define I2C_STOP_CMD 3
 #define I2C_BUS_IDLE_STATE 1
+#define I2C_MAX_TRANSFERSPEED 2
+#define I2C_MAX_SDAHOLDTIME 3
 
 //// I2C SETTINGS ////
 #define I2C_DEFAULT_BAUDRATE 100000
 #define I2C_MAX_BAUDRATE 3400000
 #define I2C_MIN_BAUDRATE 10000
 #define I2C_MAX_SCLTIMEOUT_CONFIG 3
+
+
+#define SPI_IRQ_COUNT 5
 
 
 enum I2C_STATUS : uint8_t {
@@ -284,6 +290,24 @@ inline Sercom *GET_SERCOM(int16_t sercomNum) {
     case 5: s = SERCOM5;
   }
   return s;
+}
+
+inline int16_t GET_SERCOM_NUM(Sercom *s) {
+  if (s == SERCOM0) {
+    return 0;
+  } else if (s == SERCOM1) {
+    return 1;
+  } else if (s == SERCOM2) {
+    return 2;
+  } else if (s == SERCOM3) {
+    return 3;
+  } else if (s == SERCOM4) {
+    return 4;
+  } else if (s == SERCOM5) {
+    return 5;
+  } else {
+    return -1;
+  }
 }
 
 extern const SERCOM_REF_OBJ SERCOM_REF[] = {

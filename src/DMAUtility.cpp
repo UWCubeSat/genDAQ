@@ -178,9 +178,9 @@ void DMAC_0_Handler(void) {
     reason = REASON_ERROR;
 
     if (DMAC->INTPEND.bit.CRCERR) {
-      channel.currentError = DMA_ERROR_CRC;
+      channel.currentError = ERROR_DMA_CRC;
     } else {
-      channel.currentError = DMA_ERROR_TRANSFER;
+      channel.currentError = ERROR_DMA_TRANSFER;
       channel.transferErrorFlag = true;
     }
 
@@ -197,7 +197,7 @@ void DMAC_0_Handler(void) {
 
     } else if (DMAC->INTPEND.bit.FERR) {
       channel.suspendFlag = true;
-      channel.currentError = DMA_ERROR_DESCRIPTOR;
+      channel.currentError = ERROR_DMA_DESCRIPTOR;
       reason = REASON_ERROR;
       interruptTrigger = getTrigger(channel.swTriggerFlag);
 
@@ -205,7 +205,7 @@ void DMAC_0_Handler(void) {
        == DMAC_BTCTRL_BLOCKACT_SUSPEND_Val) {
         channel.suspendFlag = true;
         reason = REASON_TRANSFER_COMPLETE_SUSPENDED; 
-        channel.currentError = DMA_ERROR_NONE;
+        channel.currentError = ERROR_NONE;
         interruptTrigger = getTrigger(channel.swTriggerFlag);
         goto transferComplete;
     }
@@ -213,7 +213,7 @@ void DMAC_0_Handler(void) {
   // Transfer complete
   } else if (DMAC->INTPEND.bit.TCMPL) {
     reason = REASON_TRANSFER_COMPLETE_STOPPED;
-    channel.currentError = DMA_ERROR_NONE;
+    channel.currentError = ERROR_NONE;
     interruptTrigger = getTrigger(channel.swTriggerFlag);
 
     transferComplete: {
@@ -544,7 +544,7 @@ TransferChannel::TransferChannel(int16_t channelIndex) : channelIndex(channelInd
   allocated = false;
   ownerID = -1;
   externalTriggerEnabled =false;
-  currentError = DMA_ERROR_NONE;
+  currentError = ERROR_NONE;
   descriptorsLooped = false;
   swPendFlag = false;
   swTriggerFlag = false;
@@ -1051,7 +1051,7 @@ bool TransferChannel::resetTransfer(bool blocking) {
   swTriggerFlag = false;
   swPendFlag = false;
   transferErrorFlag = false;
-  currentError = DMA_ERROR_NONE;
+  currentError = ERROR_NONE;
 
   return true;
 }
@@ -1206,7 +1206,7 @@ void TransferChannel::init(int16_t ownerID) {
 
   settings.setDefault();
 
-  currentError = DMA_ERROR_NONE;
+  currentError = ERROR_NONE;
   swPendFlag = false;
   swTriggerFlag = false;
   transferErrorFlag = false;
@@ -1306,7 +1306,7 @@ void TransferChannel::unloopDescriptors(bool updateWriteback) {
 static ChecksumGen *chksumArray[DMA_MAX_CHECKSUM] = { nullptr };
 
 void ChecksumIRQHandler(DMA_CALLBACK_REASON reason, TransferChannel &source, 
-int16_t descriptorIndex, int16_t currentTrigger, DMA_ERROR error) {
+int16_t descriptorIndex, int16_t currentTrigger, ERROR_ID error) {
   ChecksumGen *chksum = chksumArray[source.getOwnerID()];
   if (chksum == nullptr) return;
 
@@ -1395,7 +1395,7 @@ bool ChecksumGen::isBusy() { return !(channel->syncBusy() || isBusy()); }
 
 int16_t ChecksumGen::remainingBytes() { return channel->remainingBytes(); }
 
-DMA_ERROR ChecksumGen::getError() { return channel->getError(); }
+ERROR_ID ChecksumGen::getError() { return channel->getError(); }
 
 ChecksumGen::~ChecksumGen() { DMA.freeChannel(channel); }
 

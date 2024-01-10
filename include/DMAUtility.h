@@ -11,9 +11,9 @@ struct TransferChannel::TransferSettings;
 struct ChecksumGen::ChecksumSettings;
 
 typedef void (*DMACallbackFunction)(DMA_CALLBACK_REASON reason, TransferChannel &source, 
-int16_t descriptorIndex, int16_t currentTrigger, DMA_ERROR error);
+int16_t descriptorIndex, int16_t currentTrigger, ERROR_ID error);
 
-typedef void (*ChecksumCallback)(DMA_ERROR error, int16_t bytesWritten);
+typedef void (*ChecksumCallback)(ERROR_ID error, int16_t bytesWritten);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> DMA UTILITY
@@ -166,7 +166,7 @@ class TransferChannel {
 
     int16_t setOwnerID(int16_t newID);
 
-    DMA_ERROR getError();
+    ERROR_ID getError();
 
     struct TransferSettings {
       
@@ -220,7 +220,7 @@ class TransferChannel {
 
       //// FLAGS ////
       bool externalTriggerEnabled;
-      volatile DMA_ERROR currentError;
+      volatile ERROR_ID currentError;
       volatile bool swPendFlag;
       volatile bool swTriggerFlag;
       volatile bool transferErrorFlag;
@@ -271,7 +271,7 @@ class ChecksumGen {
 
     int16_t remainingBytes();
 
-    DMA_ERROR getError();
+    ERROR_ID getError();
 
     struct ChecksumSettings {
 
@@ -303,7 +303,7 @@ class ChecksumGen {
   private:
     friend ChecksumSettings;
     friend void ChecksumIRQHandler(DMA_CALLBACK_REASON reason, TransferChannel &source, 
-      int16_t descriptorIndex, int16_t currentTrigger, DMA_ERROR error);
+      int16_t descriptorIndex, int16_t currentTrigger, ERROR_ID error);
 
     TransferChannel *channel;
     TransferDescriptor writeDesc;

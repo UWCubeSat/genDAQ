@@ -15,34 +15,13 @@
 class IO;
 class I2CSerial;
 
-class SPIBus;
+class SPISerial;
 class UARTBus;
 class AnalogPin;
 class DigitalPin;
 
-typedef void (*IOCallback)(int16_t sourceIOID, int16_t param1, int16_t param2);
+typedef void (*IOCallback)(int16_t sourceSercomID, int16_t param1, int16_t param2);
 
-///////////////////////////////////////////////////////////////////////////////////////////////////
-///// SECTION -> PERIPHERAL MANAGER CLASS (SINGLETON)
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-class IOManager_ {
-  friend I2CSerial;
-
-  public:
-
-    IO *getActiveIO(int16_t IOID); 
-
-  private:
-    IOManager_() {}
-    static uint32_t referenceMillis;
-    IO *activeIO[IO_MAX_INSTANCES];
-
-    void abort(I2CSerial *instance);
-    void abort(SPIBus *instance);
-
-};
-extern IOManager_ &IOManager;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> SERIAL I2C PERIPHERAL
@@ -52,7 +31,7 @@ class IO {
   public:
     IO() {}
 
-    int16_t getBaseIOID();
+    int16_t getIOID();
     
     IO_TYPE getBaseType();
 
@@ -63,7 +42,7 @@ class IO {
 
 class I2CSerial : public IO {
   public:
-    I2CSerial(int16_t sercomNum, uint8_t SDA, uint8_t SCL, int16_t IOID);
+    I2CSerial(Sercom *s, uint8_t SDA, uint8_t SCL);
 
     ~I2CSerial() { exit(); }
 
@@ -99,15 +78,21 @@ class I2CSerial : public IO {
 
         I2CSettings &setTransferSpeed(int16_t transferSpeedConfig);
 
+        I2CSettings &setSCLClientTimeoutConfig(bool enabled);
+
+        I2CSettings &setSCLHostTimeoutConfig(bool enabled);
+
         I2CSettings &setSDAHoldTime(int16_t sclHoldConfig);
 
-        I2CSettings &setSleepConfig(int16_t sleepConfig);
+        I2CSettings &setSleepConfig(bool enableDurringSleep);
 
       protected:
         friend I2CSerial;
         I2CSerial *super;
         explicit I2CSettings(I2CSerial *super);
         ERROR_ID settingsError;
+
+         inline I2CSettings &changeCTRLA(const uint32_t clearMask, const uint32_t setMask);
 
     } settings{this};
 
@@ -125,13 +110,13 @@ class I2CSerial : public IO {
 
   private:
     friend void I2CdmaCallback(DMA_CALLBACK_REASON reason, TransferChannel &channel, 
-      int16_t triggerType, int16_t descIndex, DMA_ERROR error);
+      int16_t triggerType, int16_t descIndex, ERROR_ID error);
     friend I2CSettings;
 
     //// PROPERTIES ////
     const uint8_t SDA;
     const uint8_t SCL;
-    int16_t sercomNum;
+    int16_t sNum;
     Sercom *s;                      // Dont Delete
     TransferChannel *readChannel;        // Dealloc using DMAUtil
     TransferChannel *writeChannel;       // Dealloc using DMAUtil
@@ -158,9 +143,46 @@ class I2CSerial : public IO {
 
 
 
-class SPIBus : public IO {
+class SPISerial : public IO {
+  public:
+
+    SPISerial(Sercom *s, int16_t SCK, int16_t PICO, int16_t POCI, int16_t CS) {}
+
+    bool readData(int16_t byteCount, uint32_t dataDestinationAddr);
+
+  struct SPISettings {
+
+    SPISettings &setClockPhaseConfig(int16_t clockPhaseConfig);
+
+    SPISettings &setSleepConfig(bool enabledDurringSleep);
+
+    SPISettings &setDataSize(int16_t dataSizeConfig);
+
+    SPISettings &setPreloadConfig(bool enabled);
+
+    void setDefault();
+
+    private:
+      SPISerial *super;
+      explicit SPISettings(SPISerial *super);
+
+      SPISettings & changeCTRLA(const uint32_t resetMask, const uint32_t setMask);
+
+      SPISettings &changeCTRLB(const uint32_t resetMask, const uint32_t setMask);
+  };
 
 
+  private:
+    const int16_t SCK;
+    const int16_t PICO;
+    const int16_t POCI;
+    const int16_t CS; 
+    Sercom *s;
+    int16_t sNum;
+
+    void init();
+
+    void initDMA();
 
 };
 
