@@ -14,12 +14,13 @@
 
 class IO;
 class I2CSerial;
+
 class SPIBus;
 class UARTBus;
 class AnalogPin;
 class DigitalPin;
 
-typedef void (*I2CCallbackFunction)(I2CSerial &sourceInstance, I2C_STATUS currentStatus);
+typedef void (*IOCallback)(int16_t sourceIOID, int16_t param1, int16_t param2);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> PERIPHERAL MANAGER CLASS (SINGLETON)
@@ -79,19 +80,34 @@ class I2CSerial : public IO {
 
     bool isBusy();
 
-    class I2CSettings { /////////// TO DO
-      public:
+    ERROR_ID getError(); /////////// TO DO
+
+    struct I2CSettings { 
 
         void setDefault();
 
-        bool setBaudrate(int32_t buadrate);
+        I2CSettings &setBaudrate(uint32_t buadrate);
 
-        
+        I2CSettings &setCallback(IOCallback *callbackFunction);
+
+        I2CSettings &setCallbackConfig(bool errorCallback, bool requestCompleteCallback,
+          bool readCompleteCallback, bool writeCompleteCallback);
+
+        I2CSettings &setSCLTimeoutConfig(bool enabled);
+
+        I2CSettings &setInactiveTimeout(int16_t timeoutConfig);
+
+        I2CSettings &setTransferSpeed(int16_t transferSpeedConfig);
+
+        I2CSettings &setSDAHoldTime(int16_t sclHoldConfig);
+
+        I2CSettings &setSleepConfig(int16_t sleepConfig);
 
       protected:
         friend I2CSerial;
         I2CSerial *super;
         explicit I2CSettings(I2CSerial *super);
+        ERROR_ID settingsError;
 
     } settings{this};
 
@@ -108,13 +124,17 @@ class I2CSerial : public IO {
     void updateReg(int16_t regAddr, bool reg16);
 
   private:
+    friend void I2CdmaCallback(DMA_CALLBACK_REASON reason, TransferChannel &channel, 
+      int16_t triggerType, int16_t descIndex, DMA_ERROR error);
+    friend I2CSettings;
+
     //// PROPERTIES ////
     const uint8_t SDA;
     const uint8_t SCL;
     int16_t sercomNum;
     Sercom *s;                      // Dont Delete
-    DMAChannel *readChannel;        // Dealloc using DMAUtil
-    DMAChannel *writeChannel;       // Dealloc using DMAUtil
+    TransferChannel *readChannel;        // Dealloc using DMAUtil
+    TransferChannel *writeChannel;       // Dealloc using DMAUtil
     TransferDescriptor *readDesc;   // Delete
     TransferDescriptor *writeDesc;  // Delete
     TransferDescriptor *regDesc;    // Delete
@@ -126,9 +146,13 @@ class I2CSerial : public IO {
     //// FLAGS ////
     volatile bool criticalError; // Set by I2C interrupt when error detected
     volatile uint8_t busyOpp;    // Reset by DMA interrupt when transfer complete
+    bool errorCallback,
+         requestCompleteCallback,
+         readCompleteCallback,
+         writeCompleteCallback;
 
     //// SETTINGS ////
-    I2CCallbackFunction *callback;
+    IOCallback *callback;
     int32_t baudrate;
 };
 

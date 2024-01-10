@@ -4,13 +4,13 @@
 #include <GlobalDefs.h>
 
 class DMAUtility;
-class DMAChannel;
-class ChecksumChannel;
+class TransferChannel;
+class ChecksumGen;
 class TransferDescriptor;
-struct DMAChannel::ChannelSettings;
-struct ChecksumChannel::ChecksumSettings;
+struct TransferChannel::TransferSettings;
+struct ChecksumGen::ChecksumSettings;
 
-typedef void (*DMACallbackFunction)(DMA_CALLBACK_REASON reason, DMAChannel &source, 
+typedef void (*DMACallbackFunction)(DMA_CALLBACK_REASON reason, TransferChannel &source, 
 int16_t descriptorIndex, int16_t currentTrigger, DMA_ERROR error);
 
 typedef void (*ChecksumCallback)(DMA_ERROR error, int16_t bytesWritten);
@@ -22,30 +22,28 @@ typedef void (*ChecksumCallback)(DMA_ERROR error, int16_t bytesWritten);
 class DMAUtility {
   private:
     DMAUtility() {}
-    static DMAChannel channelArray[DMA_MAX_CHANNELS];
+    static TransferChannel channelArray[DMA_MAX_CHANNELS];
     static bool begun;
     static int16_t currentChannel;
 
   public:
 
-    void begin();
+      void begin();
 
-    void end();
+      void end();
 
-    DMAChannel &getChannel(int16_t channelIndex);
+      TransferChannel &getTransferChannel(int16_t channelIndex);
 
-    ChecksumChannel &getChecksumChannel();
-  
-    DMAChannel &operator [] (int16_t channelIndex);
+      TransferChannel &operator [] (int16_t channelIndex);
 
-    DMAChannel *allocateChannel();
-    DMAChannel *allocateChannel(int16_t ownerID);
+      TransferChannel *allocateTransferChannel();
+      TransferChannel *allocateTransferChannel(int16_t ownerID);
 
-    void freeChannel(int16_t channelIndex);
-    void freeChannel(DMAChannel *channel);
+      void freeChannel(int16_t channelIndex);
+      void freeChannel(TransferChannel *channel);
 
-    void resetChannel(int16_t channelIndex);
-    void resetChannel(DMAChannel *channel);
+      void resetChannel(int16_t channelIndex);
+      void resetChannel(TransferChannel *channel);
 };
 extern DMAUtility &DMA;
 
@@ -55,8 +53,8 @@ extern DMAUtility &DMA;
 
 class TransferDescriptor {
   private:
-    friend DMAChannel;
-    friend ChecksumChannel;
+    friend TransferChannel;
+    friend ChecksumGen;
     DmacDescriptor desc;
     DmacDescriptor *currentDesc;
     uint32_t baseSourceAddr;
@@ -101,7 +99,7 @@ class TransferDescriptor {
 ///// SECTION -> DMA CHANNEL
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-class DMAChannel {
+class TransferChannel {
   public:
     const int16_t channelIndex;
 
@@ -166,40 +164,48 @@ class DMAChannel {
 
     int16_t getOwnerID();
 
-    struct ChannelSettings {
+    int16_t setOwnerID(int16_t newID);
+
+    DMA_ERROR getError();
+
+    struct TransferSettings {
       
-        ChannelSettings &setTransferThreshold(int16_t elements);
+        TransferSettings &setTransferThreshold(int16_t elements);
 
-        ChannelSettings &setBurstLength(int16_t elements);
+        TransferSettings &setBurstLength(int16_t elements);
 
-        ChannelSettings &setTriggerAction(DMA_TRIGGER_ACTION action);
+        TransferSettings &setTriggerAction(DMA_TRIGGER_ACTION action);
 
-        ChannelSettings &setStandbyConfig(bool enabledDurringStandby);
+        TransferSettings &setStandbyConfig(bool enabledDurringStandby);
 
-        ChannelSettings &setPriorityLevel(int16_t priorityLevel);
+        TransferSettings &setPriorityLevel(int16_t priorityLevel);
 
-        ChannelSettings &setCallbackFunction(DMACallbackFunction callback);
+        TransferSettings &setCallbackFunction(DMACallbackFunction callback);
 
-        ChannelSettings &setDescriptorsLooped(bool descriptorsLooped, bool updateWriteback);
+        TransferSettings &setCallbackConfig(bool errorCallbacks, bool transferCompleteCallbacks,
+          bool suspendCallbacks);
+
+        TransferSettings &setDescriptorsLooped(bool descriptorsLooped, bool updateWriteback);
         
         void removeCallbackFunction();
 
-        ChannelSettings &setExternalTrigger(DMA_TRIGGER trigger);
+        TransferSettings &setExternalTrigger(DMA_TRIGGER trigger);
 
         void removeExternalTrigger();
 
         void setDefault();
 
       private:
-        friend DMAChannel;
-        DMAChannel *super;  
-        explicit ChannelSettings(DMAChannel *super);
+        friend TransferChannel;
+        TransferChannel *super;  
+        explicit TransferSettings(TransferChannel *super);
 
     }settings{this};
 
     private:
+
       friend void DMAC_0_Handler(void);
-      friend ChecksumChannel;
+      friend ChecksumGen;
       friend DMAUtility;
 
       //// GENERL FIELDS ////
@@ -226,10 +232,15 @@ class DMAChannel {
       DMA_TRIGGER externalTrigger;
       DMACallbackFunction callback;
       bool descriptorsLooped;
+      bool errorCallbacks;
+      bool transferCompleteCallbacks;
+      bool suspendCallbacks;
+
+      TransferChannel(int16_t channelIndex);
+
+    protected:
 
       DmacDescriptor *getDescriptor(int16_t descriptorIndex);
-
-      DMAChannel(int16_t channelIndex);
 
       void clear();
 
@@ -240,18 +251,17 @@ class DMAChannel {
       void  unloopDescriptors(bool updateWriteback);
     
       void clearDescriptors();
-
-    protected:
-
-      DMAChannel &base() { return *this; } // Allows derived classes to access overwritte methods in this class
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> CHECKSUM CHANNEL
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-class ChecksumChannel : private DMAChannel {
+class ChecksumGen {
   public:
+    const int16_t ownerID;
+
+    ChecksumGen(int16_t ownerID);
 
     bool start(int16_t checksumLength);
 
@@ -282,31 +292,29 @@ class ChecksumChannel : private DMAChannel {
       void setDefault();
 
       private:
-        friend ChecksumChannel;
-        ChecksumChannel *super;
-        explicit ChecksumSettings(ChecksumChannel *super);
+        friend ChecksumGen;
+        ChecksumGen *super;
+        explicit ChecksumSettings(ChecksumGen *super);
+
     }settings{this};
 
+    ~ChecksumGen();
+
   private:
-    friend DMAUtility;
     friend ChecksumSettings;
-    friend void ChecksumIRQHandler(DMA_CALLBACK_REASON reason, DMAChannel &source, 
+    friend void ChecksumIRQHandler(DMA_CALLBACK_REASON reason, TransferChannel &source, 
       int16_t descriptorIndex, int16_t currentTrigger, DMA_ERROR error);
 
-    //// FIELDS ////
+    TransferChannel *channel;
     TransferDescriptor writeDesc;
     TransferDescriptor readDesc;
-    ChecksumCallback callback; 
-    
-    //// FLAGS ////
+    ChecksumCallback *callback; 
+    int16_t uniqueID;
+  
+  protected:
     bool descValid;
     volatile int16_t remainingCycles;
-
-    //// SETTINGS ////
     bool mode32;
-
-
-    ChecksumChannel(int16_t index);
 
     void init();
 };

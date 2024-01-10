@@ -26,16 +26,13 @@ IO_TYPE IO::getBaseType() { return baseType; }
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Note -> interrupt handles errors only
-void I2CdmaCallback(DMA_CALLBACK_REASON reason, DMAChannel &channel, 
+void I2CdmaCallback(DMA_CALLBACK_REASON reason, TransferChannel &channel, 
   int16_t triggerType, int16_t descIndex, DMA_ERROR error) {
 
   I2CSerial *source = static_cast<I2CSerial*>(IOManager.getActiveIO(channel.getOwnerID()));
-
+  source->busyOpp = 0;
   
 }
-
-
-//////////////////////////// NEED TO COMPLETE
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -59,7 +56,7 @@ I2CSerial::I2CSerial(int16_t sercomNum, uint8_t SDA, uint8_t SCL, int16_t IOID)
   }
   s = GET_SERCOM(sercomNum); 
 
-  // Initialize I2C module
+  // Initialize I2C peripheral
   if(!init()) IOManager.abort(this);
 }
 
@@ -78,11 +75,11 @@ bool I2CSerial::requestData(uint8_t deviceAddr, uint16_t registerAddr, bool reg1
 
   // Set up DMA to write register addr                                             
   writeChannel->enable();
-  readChannel->reset(true);
+  readChannel->resetTransfer(true);
   writeChannel->enableExternalTrigger();
   writeChannel->setDescriptor(regDesc, true);
   
-  // Set up the I2C module
+  // Set up the I2C peripheral
                                                             
   s->I2CM.ADDR.reg = SERCOM_I2CM_ADDR_LENEN              // Enable auto length           
     | SERCOM_I2CM_ADDR_LEN(regAddrLength)                // Set length of data to write
@@ -123,7 +120,7 @@ bool I2CSerial::readData(int16_t readCount, void *dataDestination) {
   readDesc->setDestination(destAddr, true);
 
   readChannel->enable();
-  readChannel->reset(true);
+  readChannel->resetTransfer(true);
   readChannel->setAllValid(true);
   readChannel->enableExternalTrigger();
 
@@ -164,11 +161,11 @@ bool I2CSerial::writeData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16,
   TransferDescriptor *descs[2] = { regDesc, writeDesc };
 
   writeChannel->enable();
-  writeChannel->reset(true);
+  writeChannel->resetTransfer(true);
   writeChannel->setDescriptors(descs, 2, true, false);
   writeChannel->enableExternalTrigger();
 
-  // Enable I2C module
+  // Enable I2C peripheral
   s->I2CM.ADDR.reg = SERCOM_I2CM_ADDR_LENEN        // Enable auto length           
     | SERCOM_I2CM_ADDR_LEN(regAddrLength)          // Set length of data to write
     | SERCOM_I2CM_ADDR_ADDR(deviceAddr << 1        // Load address of device into reg -> "0" denotes write req
@@ -260,20 +257,20 @@ bool I2CSerial::init() {
   GCLK->PCHCTRL[SERCOM_REF[sercomNum].clock].bit.CHEN = 1;  // Enable clock channel
   GCLK->PCHCTRL[SERCOM_REF[sercomNum].clock].bit.GEN = 1;   // Enable clock generator
 
-  // Disable & reset the I2CSerial module
+  // Disable & reset the I2CSerial peripheral
   s->I2CM.CTRLA.bit.ENABLE = 0;
   while(s->I2CM.SYNCBUSY.bit.ENABLE);
   s->I2CM.CTRLA.bit.SWRST = 1;
   while(s->I2CM.SYNCBUSY.bit.SWRST);
 
-  // Configure the I2CSerial module 
+  // Configure the I2CSerial peripheral 
   s->I2CM.CTRLA.bit.MODE = 5;                // Enable master mode
   s->I2CM.CTRLB.bit.SMEN = 1;                // Enable "smart" mode -> Auto sends ACK on data read
   s->I2CM.BAUD.bit.BAUD                      // Calculate & set baudrate 
     = SERCOM_FREQ_REF / (2 * baudrate) - 7;  
   s->I2CM.INTENSET.bit.ERROR = 1;            // Enable error interrupt -> Other interrupt enabled by settings
 
-  // Re-enable I2CSerial module
+  // Re-enable I2CSerial peripheral
   s->I2CM.CTRLA.bit.ENABLE = 1;
   while(s->I2CM.SYNCBUSY.bit.ENABLE);
 
@@ -292,17 +289,17 @@ bool I2CSerial::init() {
 bool I2CSerial::initDMA() {
 
   // Allocate 2 new DMA channel
-  DMAChannel *newChannel1 = DMA.allocateChannel(IOID);
-  DMAChannel *newChannel2 = DMA.allocateChannel(IOID);
+  TransferChannel *newChannel1 = DMA.allocateTransferChannel(IOID);
+  TransferChannel *newChannel2 = DMA.allocateTransferChannel(IOID);
   if (newChannel1 == nullptr || newChannel2 == nullptr) return false;
 
   // Channels are not null -> set fields
   readChannel = newChannel1;
   writeChannel = newChannel2;
 
-  readDesc = new TransferDescriptor();
-  writeDesc = new TransferDescriptor();
-  regDesc = new TransferDescriptor();
+  readDesc = new TransferDescriptor(nullptr, nullptr, 0);
+  writeDesc = new TransferDescriptor(nullptr, nullptr, 0);
+  regDesc = new TransferDescriptor(nullptr, nullptr, 0);
 
   // Configure descriptors/channels with base settings
   readDesc->
@@ -369,7 +366,7 @@ void I2CSerial::exit() {
   PORT->Group[g_APinDescription[SDA].ulPort].PMUX[g_APinDescription[SDA].ulPin >> 1].reg 
     |= ~PORT_PMUX_MASK;
   
-  // Disable & reset sercom module/registers
+  // Disable & reset sercom peripheral/registers
   s->I2CM.CTRLA.bit.ENABLE = 0;
   while(s->I2CM.SYNCBUSY.bit.ENABLE);
   s->I2CM.CTRLA.bit.SWRST = 1;
@@ -399,6 +396,7 @@ void I2CSerial::resetFields() {
   writeDesc = nullptr;
   regDesc = nullptr;
   bool reg16 = false;
+  currentError = ERROR_NONE;
 
   // Cache
   registerAddr[2] = { 0 };
@@ -425,9 +423,82 @@ void I2CSerial::updateReg(int16_t registerAddr, bool reg16) {
 }
 
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> I2C SETTINGS
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+
 I2CSerial::I2CSettings::I2CSettings(I2CSerial *super) {
   this->super = super;
 }
+
+
+I2CSerial::I2CSettings &I2CSerial::I2CSettings::setBaudrate(uint32_t baudrate) {
+  if (baudrate < I2C_MIN_BAUDRATE || baudrate > I2C_MAX_BAUDRATE) {
+    settingsError = ERROR_SETTINGS_OOB;
+    return *this;
+  }
+  // Disable, change baud rate & re-enable I2C peripheral (if enabled)
+  if (super->s->I2CM.CTRLA.bit.ENABLE) {
+    super->s->I2CM.CTRLA.bit.ENABLE = 0;
+    while(super->s->I2CM.SYNCBUSY.bit.ENABLE);
+    super->s->I2CM.BAUD.bit.BAUD = SERCOM_FREQ_REF / (2 * baudrate) - 7;
+    super->s->I2CM.CTRLA.bit.ENABLE = 1;
+    while(super->s->I2CM.SYNCBUSY.bit.ENABLE);
+  } else {
+    super->s->I2CM.BAUD.bit.BAUD = SERCOM_FREQ_REF / (2 * baudrate) - 7;
+  }
+  return *this;
+}
+
+
+I2CSerial::I2CSettings &I2CSerial::I2CSettings::setCallback(IOCallback *callbackFunction) {
+  super->callback = callbackFunction;
+  return *this;
+}
+
+
+I2CSerial::I2CSettings &I2CSerial::I2CSettings::setCallbackConfig(bool errorCallback, 
+  bool requestCompleteCallback, bool readCompleteCallback, bool writeCompleteCallback) {
+  super->errorCallback = errorCallback;
+  super->requestCompleteCallback = requestCompleteCallback;
+  super->readCompleteCallback = readCompleteCallback;
+  super->writeCompleteCallback = writeCompleteCallback;
+  return *this;
+}
+
+
+I2CSerial::I2CSettings &I2CSerial::I2CSettings::setSCLTimeoutConfig(bool enabled) {
+  if (super->s->I2CM.CTRLA.bit.ENABLE) {
+    super->s->I2CM.CTRLA.bit.ENABLE = 0;
+    while(super->s->I2CM.SYNCBUSY.bit.ENABLE);
+    super->s->I2CM.CTRLA.bit.LOWTOUTEN = (uint8_t)enabled;
+    super->s->I2CM.CTRLA.bit.ENABLE = 1;
+    while(super->s->I2CM.SYNCBUSY.bit.ENABLE);
+  } else {
+    super->s->I2CM.CTRLA.bit.LOWTOUTEN = (uint8_t)enabled;
+  }
+  return *this;
+}
+
+
+I2CSerial::I2CSettings &I2CSerial::I2CSettings::setInactiveTimeout(int16_t timeoutConfig) {
+  if (timeoutConfig < 0 || timeoutConfig > I2C_MAX_SCLTIMEOUT_CONFIG) {
+    settingsError = ERROR_SETTINGS_INVALID;
+    return *this;
+  }
+  if (super->s->I2CM.CTRLA.bit.ENABLE) {
+    super->s->I2CM.CTRLA.bit.ENABLE = 0;
+    while(super->s->I2CM.SYNCBUSY.bit.ENABLE);
+    super->s->I2CM.CTRLA.bit.INACTOUT = timeoutConfig;
+    super->s->I2CM.CTRLA.bit.ENABLE = 1;
+    while(super->s->I2CM.SYNCBUSY.bit.ENABLE);
+  } else {
+    super->s->I2CM.CTRLA.bit.INACTOUT = timeoutConfig;
+  }
+  return *this;
+}
+
 
 
 
