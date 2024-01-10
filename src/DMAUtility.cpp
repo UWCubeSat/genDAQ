@@ -126,6 +126,34 @@ void DMAUtility::freeChannel(int16_t channelIndex) {
   targChannel.ownerID = -1;
 }
 
+
+void DMAUtility::freeChannel(DMAChannel *channel) {         ////////// ADD ASSERT -> CHANNEL NOT NULL
+  channel->clear();
+  channel->allocated = false;
+  channel->ownerID = -1;
+  channel = nullptr;
+}
+
+
+void DMAUtility::resetChannel(DMAChannel *channel) {
+  // If null or not alloc'd -> no ability/reason to reset
+  if (channel == nullptr) {
+    return;
+  } else if (!channel->allocated) {
+    return;
+  } else {
+    int16_t CHID = channel->ownerID;
+    channel->clear();
+    channel->init(CHID);
+  }
+}
+
+
+void DMAUtility::resetChannel(int16_t channelIndex) {
+  CLAMP(channelIndex, 0, DMA_MAX_CHANNELS - 1);
+  resetChannel(&channelArray[channelIndex]);
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> DMA INTERRUPT FUNCTION
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -139,8 +167,6 @@ int16_t getTrigger(bool swTriggerFlag) {
   return 0;
 }
 
-//////////////////////// HANDLER NEEDS TO BE UPDATED TO CONSIDER BURST BASED TRANSFERS  -> AND OTHER STUFF IS PROB WRONG...
-
 void DMAC_0_Handler(void) {
   DMAChannel &channel = DMA.getChannel(DMAC->INTPEND.bit.ID);
   DMACallbackFunction callback = channel.callback;
@@ -151,7 +177,6 @@ void DMAC_0_Handler(void) {
   if(DMAC->INTPEND.bit.TERR) {
     reason = REASON_ERROR;
 
-    // Transfer error -> determine source
     if (DMAC->INTPEND.bit.CRCERR) {
       channel.currentError = DMA_ERROR_CRC;
     } else {
@@ -159,32 +184,32 @@ void DMAC_0_Handler(void) {
       channel.transferErrorFlag = true;
     }
 
-    // Update most recent active trigger & clear flags (bc disabled)
     interruptTrigger = getTrigger(channel.swTriggerFlag);
     channel.swTriggerFlag = false;
     channel.swPendFlag = false;
+    channel.syncStatus = 0;
 
   // Channel suspended
   } else if (DMAC->INTPEND.bit.SUSP) {
-      channel.suspendFlag = true;
+      
+    if (channel.suspendFlag) {
+      // If client called cmd -> reset flag & dont callback
+      DMAC->Channel[channel.channelIndex].CHINTFLAG.bit.SUSP = 1;
+      return; 
+    }
 
-    // Suspend req from client -> Do nothing
-    if (DMAC->Channel[channel.channelIndex].CHCTRLB.bit.CMD == DMAC_CHCTRLB_CMD_SUSPEND_Val) {
-      goto end;
-
-    // TransferDescriptor error
-    } else if (DMAC->INTPEND.bit.FERR) {
+    channel.suspendFlag = true;
+    if (DMAC->INTPEND.bit.FERR) {
       channel.currentError = DMA_ERROR_DESCRIPTOR;
       reason = REASON_ERROR;
       interruptTrigger = getTrigger(channel.swTriggerFlag);
 
-    // Block suspend action -> transfer complete
     } else if (writebackDescriptorArray[channel.channelIndex].BTCTRL.bit.BLOCKACT
-        == DMAC_BTCTRL_BLOCKACT_SUSPEND_Val) {
-      reason = REASON_SUSPENDED; 
-      channel.currentError = DMA_ERROR_NONE;
-      interruptTrigger = getTrigger(channel.swTriggerFlag);
-      goto transferComplete;
+       == DMAC_BTCTRL_BLOCKACT_SUSPEND_Val) {
+        reason = REASON_SUSPENDED; 
+        channel.currentError = DMA_ERROR_NONE;
+        interruptTrigger = getTrigger(channel.swTriggerFlag);
+        goto transferComplete;
     }
 
   // Transfer complete
@@ -194,33 +219,51 @@ void DMAC_0_Handler(void) {
     interruptTrigger = getTrigger(channel.swTriggerFlag);
 
     transferComplete: {
-      // Update trigger & pending flags
       channel.swTriggerFlag = channel.swPendFlag;
       channel.swPendFlag = false;
 
-      // Update descriptor counter
-      channel.currentDescriptor++;
-      if (channel.currentDescriptor >= channel.descriptorCount) {
-        channel.currentDescriptor = 0;
+      if (writebackDescriptorArray[channel.channelIndex].BTCNT.bit.BTCNT == 0) {
+        channel.currentDescriptor++;
+
+        if (channel.currentDescriptor >= channel.descriptorCount) {
+          channel.currentDescriptor = 0;
+        }
       }
     }
+  }
+  // If reset called -> re-enable channel
+  if (channel.syncStatus == 3) {
+    DMAC->Channel[channel.channelIndex].CHCTRLA.bit.ENABLE = 1;
+    channel.syncStatus = 0;
   }
   if (channel.callback != nullptr) {
     callback(reason, channel, channel.currentDescriptor, interruptTrigger, channel.currentError);
   }
-  end: 
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> DMA DESCRIPTOR METHODS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-TransferDescriptor::TransferDescriptor () {
+TransferDescriptor::TransferDescriptor(void *source, void *destination, 
+  uint8_t transferAmountBytes) {
   currentDesc = &desc;
   baseSourceAddr = 0;
   baseDestAddr = 0;
   primaryBound = false;
-  validCount = 0;
+  
+  // Set source, dest & transfer amount
+  currentDesc->BTCNT.bit.BTCNT = transferAmountBytes;
+  if (source != nullptr) {
+    currentDesc->SRCADDR.bit.SRCADDR = reinterpret_cast<uint32_t>(source);
+  } else {
+    currentDesc->SRCADDR.reg |= DMAC_SRCADDR_RESETVALUE;
+  }
+  if (destination != nullptr) {
+    currentDesc->DSTADDR.bit.DSTADDR = reinterpret_cast<uint32_t>(destination);
+  } else {
+    currentDesc->DSTADDR.reg |= DMAC_SRCADDR_RESETVALUE;
+  }
   setDefault();
 }
 
@@ -240,8 +283,15 @@ TransferDescriptor &TransferDescriptor::setSource(uint32_t sourceAddr,
   } else {
     currentDesc->SRCADDR.bit.SRCADDR = sourceAddr;
   }
-  validCount++;
-  if (validCount == 3) currentDesc->BTCTRL.bit.VALID = 1;
+  isValid(); // Check & update valid status;
+  return *this;
+}
+
+TransferDescriptor &TransferDescriptor::setSource(void *sourcePtr, bool correctAddress) {
+  if (sourcePtr != nullptr) {
+    uint32_t addr = reinterpret_cast<uint32_t>(sourcePtr);
+    setDestination(addr, correctAddress);
+  }
   return *this;
 }
 
@@ -261,8 +311,15 @@ TransferDescriptor &TransferDescriptor::setDestination(uint32_t destinationAddr,
   } else {
     currentDesc->DSTADDR.bit.DSTADDR = destinationAddr;
   }
-  validCount++;
-  if (validCount == 3) currentDesc->BTCTRL.bit.VALID = 1;
+  isValid(); // Check & update valid status
+  return *this;
+}
+
+TransferDescriptor &TransferDescriptor::setDestination(void *destinationPtr, bool correctAddress = true) {
+  if (destinationPtr != nullptr) {
+    uint32_t addr = reinterpret_cast<uint32_t>(destinationPtr);
+    setDestination(addr, correctAddress);
+  }
   return *this;
 }
 
@@ -270,6 +327,7 @@ TransferDescriptor &TransferDescriptor::setTransferAmount(uint16_t byteCount) {
   currentDesc->BTCNT.bit.BTCNT = (uint16_t)byteCount;
   if (baseDestAddr != 0) setDestination(baseDestAddr, true);
   if (baseSourceAddr != 0) setSource(baseSourceAddr, true);
+  isValid(); // Check & update valid status
   return *this;
 }
 
@@ -283,8 +341,6 @@ TransferDescriptor &TransferDescriptor::setDataSize(int16_t byteCount) {
   } else {
     currentDesc->BTCTRL.bit.BEATSIZE = DMA_DEFAULT_DATA_SIZE;
   }
-  validCount++;
-  if (validCount == 3) currentDesc->BTCTRL.bit.VALID = 1;
 
   if (baseDestAddr != 0) setDestination(baseDestAddr, true);
   if (baseSourceAddr != 0) setSource(baseSourceAddr, true);
@@ -328,20 +384,28 @@ TransferDescriptor &TransferDescriptor::setAction(DMA_TRANSFER_ACTION action) {
   currentDesc->BTCTRL.bit.BLOCKACT = (uint8_t)action;
 }
 
+bool TransferDescriptor::isValid() {
+  if (currentDesc->BTCNT.bit.BTCNT != 0
+  && currentDesc->DSTADDR.bit.DSTADDR != 0
+  && currentDesc->DSTADDR.bit.DSTADDR != 0) {
+    currentDesc->BTCTRL.bit.VALID = 1;
+    return true;
+  } else {
+    currentDesc->BTCTRL.bit.VALID = 0;
+    return false;
+  }
+}
+
 void TransferDescriptor::setDefault() {
-  currentDesc->BTCNT.bit.BTCNT = DMA_DEFAULT_TRANSFER_AMOUNT;
-  currentDesc->DSTADDR.bit.DSTADDR = DMA_DEFAULT_DESTINATION;
-  currentDesc->SRCADDR.bit.SRCADDR = DMA_DEFAULT_SOURCE;
   currentDesc->BTCTRL.bit.BEATSIZE = DMA_DEFAULT_DATA_SIZE;
   currentDesc->BTCTRL.bit.BLOCKACT = DMA_DEFAULT_TRANSFER_ACTION;
   currentDesc->BTCTRL.bit.DSTINC = DMA_DEFAULT_INCREMENT_DESTINATION;
   currentDesc->BTCTRL.bit.SRCINC = DMA_DEFAULT_INCREMENT_SOURCE;
   currentDesc->BTCTRL.bit.STEPSEL = DMA_DEFAULT_STEPSELECTION;
   currentDesc->BTCTRL.bit.STEPSIZE = DMA_DEFAULT_STEPSIZE;
-  currentDesc->BTCTRL.bit.VALID = 0;
+  isValid();
   baseSourceAddr = 0;
   baseDestAddr = 0;
-  validCount = 0;
 }
 
 // Link is never unbound -> would take too much mem to save all linked descriptors
@@ -364,6 +428,10 @@ bool TransferDescriptor::isBindable() { return !primaryBound; }
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> DMA CHANNEL SETTINGS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+
+DMAChannel::ChannelSettings::ChannelSettings(DMAChannel *super) {
+  this->super = super;
+}
 
 DMAChannel::ChannelSettings &DMAChannel::ChannelSettings::setTransferThreshold(int16_t elements) {
   elements -= 1; 
@@ -475,7 +543,7 @@ DMAChannel::DMAChannel(int16_t channelIndex) : channelIndex(channelIndex) {
 bool DMAChannel::setDescriptors(TransferDescriptor **descriptorArray, int16_t count, 
    bool bindDescriptors, bool updateWriteback) {
   DMA_STATUS prevStatus = getStatus();
-  int16_t prevWbIndex = getWritebackIndex();
+  int16_t prevWbIndex = getLastIndex();
 
   // Check nullptr exceptions
   if (descriptorArray == nullptr) return false;
@@ -791,13 +859,17 @@ bool DMAChannel::suspend(bool blocking) {
       || getStatus() == DMA_CHANNEL_ERROR) {
     return false;
   }
+  syncStatus = 0;
   // Send a suspend cmd 
   DMAC->Channel[channelIndex].CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_SUSPEND_Val;
 
   // If blocking wait for interrupt
   if (blocking) {
-    while(!DMAC->Channel[channelIndex].CHINTFLAG.bit.SUSP);
+    while(DMAC->Channel[channelIndex].CHINTFLAG.bit.SUSP);
+  } else {
+    syncStatus = 1;
   }
+  suspendFlag = true;
   return true;
 }
 
@@ -807,6 +879,7 @@ bool DMAChannel::resume() {
       || getStatus() == DMA_CHANNEL_ERROR) {
     return false;
   }
+  syncStatus = 0;
   // Send a resume cmd & clear flag
   DMAC->Channel[channelIndex].CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_RESUME_Val;
   suspendFlag = false;
@@ -819,6 +892,7 @@ bool DMAChannel::noaction() {
       || getStatus() == DMA_CHANNEL_ERROR) {
     return false;
   }
+  syncStatus = 0;
   // Send a noaction cmd & clear flags
   DMAC->Channel[channelIndex].CHCTRLB.bit.CMD = DMAC_CHCTRLB_CMD_NOACT_Val;
   suspendFlag = false;
@@ -846,9 +920,12 @@ bool DMAChannel::queue(int16_t descriptorIndex) {
 
 
 void DMAChannel::disable(bool blocking) {
+  syncStatus = 0;
   DMAC->Channel[channelIndex].CHCTRLA.bit.ENABLE = 0;
   if (blocking) {
-    while(DMAC->Channel[channelIndex].CHSTATUS.bit.BUSY);
+    while(DMAC->Channel[channelIndex].CHCTRLA.bit.ENABLE);
+  } else {
+    syncStatus = 2;
   }
 }
 
@@ -858,6 +935,7 @@ bool DMAChannel::enable() {
     return false;
   }
   DMAC->Channel[channelIndex].CHCTRLA.bit.ENABLE = 1;
+  syncStatus = 0;
   return true;
 }
 
@@ -878,10 +956,9 @@ bool DMAChannel::disableExternalTrigger() {
 bool DMAChannel::setDescriptorValid(int16_t descriptorIndex, bool valid) {
   // Check for exceptions
   CLAMP(descriptorIndex, -1, descriptorCount);
-  if (descriptorCount == 0) {
-    return false;
-  } else if (descriptorIndex == -1 && writebackDescriptorArray[channelIndex].SRCADDR.reg
-    | DMAC_SRCADDR_RESETVALUE == 0) {
+  if (descriptorCount == 0
+  || (descriptorIndex == -1 && writebackDescriptorArray[channelIndex].SRCADDR.reg
+   | DMAC_SRCADDR_RESETVALUE == 0)) {
     return false;
   }
   
@@ -897,13 +974,29 @@ bool DMAChannel::setDescriptorValid(int16_t descriptorIndex, bool valid) {
 } 
 
 
+bool DMAChannel::setAllValid(bool valid) {
+  // Check for exceptions
+  if (descriptorCount == 0) {
+    return false;
+  }
+  // Iterate through all descriptors and if valid does not match update valid status
+  DmacDescriptor *targetDescriptor = &primaryDescriptorArray[channelIndex]; 
+  for (int16_t i = 1; i <= descriptorCount; i++) {
+    if (targetDescriptor->BTCTRL.bit.VALID != (uint8_t)valid) {
+      targetDescriptor->BTCTRL.bit.VALID = (uint8_t)valid;
+    }
+    targetDescriptor = (DmacDescriptor*)targetDescriptor->DESCADDR.bit.DESCADDR;
+  }
+  return true;
+}
+
+
 bool DMAChannel::getDescriptorValid(int16_t descriptorIndex) {
   // Check for exceptions
   CLAMP(descriptorIndex, -1, descriptorCount);
-  if (primaryDescriptorArray[channelIndex].SRCADDR.reg | DMAC_SRCADDR_RESETVALUE == 0) {
-    return false;
-  } else if (descriptorIndex == -1 && writebackDescriptorArray[channelIndex].SRCADDR.reg
-    | DMAC_SRCADDR_RESETVALUE == 0) {
+  if (primaryDescriptorArray[channelIndex].SRCADDR.reg | DMAC_SRCADDR_RESETVALUE == 0
+  && (descriptorIndex == -1 && writebackDescriptorArray[channelIndex].SRCADDR.reg
+   | DMAC_SRCADDR_RESETVALUE == 0)) {
     return false;
   }
   // Get the valid status of the requested descriptor
@@ -916,19 +1009,25 @@ bool DMAChannel::getDescriptorValid(int16_t descriptorIndex) {
 }
 
 
-bool DMAChannel::reset(bool blocking) {
+bool DMAChannel::resetTransfer(bool blocking) {
   if (!DMAC->Channel[channelIndex].CHCTRLA.bit.ENABLE) {
     return false;
   }
+  syncStatus = 0;
   // Disable the channel/interrupts & clear interrupt flags
   DMAC->Channel[channelIndex].CHCTRLA.bit.ENABLE = 0;
   DMAC->Channel[channelIndex].CHINTENCLR.reg &= DMAC_CHINTENCLR_RESETVALUE;
   DMAC->Channel[channelIndex].CHINTFLAG.reg &= DMAC_CHINTFLAG_RESETVALUE;
 
+  // Re-enable interrupts
+  DMAC->Channel[channelIndex].CHINTENSET.reg |= DMAC_CHINTENSET_MASK;
+
   // If blocking -> wait for sync
-  if (blocking) {
-    while(DMAC->Channel[channelIndex].CHSTATUS.bit.BUSY 
-    || DMAC->Channel[channelIndex].CHSTATUS.bit.PEND);
+  if (blocking && isBusy()) {
+    while(DMAC->Channel[channelIndex].CHCTRLA.bit.ENABLE);
+    DMAC->Channel[channelIndex].CHCTRLA.bit.ENABLE = 1;
+  } else {
+    syncStatus = 3; // Set flag -> interrupt will clear
   }
   
   // Clear flags / errors
@@ -937,8 +1036,6 @@ bool DMAChannel::reset(bool blocking) {
   transferErrorFlag = false;
   currentError = DMA_ERROR_NONE;
 
-  // Re-enable channel
-  DMAC->Channel[channelIndex].CHCTRLA.bit.ENABLE = 1;
   return true;
 }
 
@@ -952,6 +1049,7 @@ void DMAChannel::clear() {
   suspendFlag = false;
   externalTriggerEnabled = false;
   currentDescriptor = 0;
+  syncStatus = 0;
 
   clearDescriptors();
 
@@ -972,12 +1070,13 @@ bool DMAChannel::getEnabled() { return DMAC->Channel[channelIndex].CHCTRLA.bit.E
 
 
 bool DMAChannel::isBusy() { 
-return (DMAC->Channel[channelIndex].CHSTATUS.bit.BUSY 
-    || DMAC->Channel[channelIndex].CHSTATUS.bit.PEND);
+return ((DMAC->Channel[channelIndex].CHSTATUS.bit.BUSY 
+    || DMAC->Channel[channelIndex].CHSTATUS.bit.PEND)
+    && !suspendFlag);
 }
 
 
-int16_t DMAChannel::getWritebackIndex() {
+int16_t DMAChannel::getLastIndex() {
   if (getStatus() == DMA_CHANNEL_BUSY) {
     if (currentDescriptor + 1 == descriptorCount) {
       return 0;
@@ -1008,13 +1107,30 @@ int16_t DMAChannel::getPending() {
 }
 
 
+int16_t DMAChannel::remainingBytes() {
+  if (writebackDescriptorArray[channelIndex].SRCADDR.bit.SRCADDR == 0) {
+    return 0;
+  }
+  // Calculate + return num of bytes left using 1 - left shift power technique
+  return (writebackDescriptorArray[channelIndex].BTCNT.bit.BTCNT
+          * (int16_t)(1 << writebackDescriptorArray[channelIndex].BTCTRL.bit.BEATSIZE)); 
+}
+
+
+int16_t DMAChannel::remainingBursts() {
+  if (writebackDescriptorArray[channelIndex].SRCADDR.bit.SRCADDR == 0) {
+    return 0;
+  }
+  // Divide remaining bytes by the current burst size & round up to nearest whole number:
+  return UDIV_CEIL(remainingBytes(), DMAC->Channel[channelIndex].CHCTRLA.bit.BURSTLEN);
+}
+
+
 DMA_STATUS DMAChannel::getStatus() {
-  if (DMAC->Channel[channelIndex].CHSTATUS.bit.BUSY
-  || DMAC->Channel[channelIndex].CHSTATUS.bit.PEND) {
+  if (isBusy()) {
     return DMA_CHANNEL_BUSY;
 
-  } else if (suspendFlag || DMAC->Channel[channelIndex].CHCTRLB.bit.CMD 
-    == DMAC_CHCTRLB_CMD_SUSPEND_Val) {
+  } else if (suspendFlag) {
     return DMA_CHANNEL_SUSPENDED;
 
   } else if (DMAC->Channel[channelIndex].CHCTRLA.bit.ENABLE) {
@@ -1024,6 +1140,21 @@ DMA_STATUS DMAChannel::getStatus() {
     return DMA_CHANNEL_DISABLED;
   }
 }
+
+bool DMAChannel::syncBusy() {
+  if (syncStatus == 1
+  && DMAC->Channel[channelIndex].CHCTRLB.bit.CMD != 1) {
+    syncStatus = 0;
+    return false;
+  } else if (syncStatus == 2
+  && !DMAC->Channel[channelIndex].CHCTRLA.bit.ENABLE) {
+    return true;
+  } else if (syncStatus == 0) { // Note -> syncStatus = 3 auto cleared by interrupt
+    return false;
+  }
+  return true;
+}
+
 
 int16_t DMAChannel::getOwnerID() { return ownerID; }
 
@@ -1061,6 +1192,7 @@ void DMAChannel::init(int16_t ownerID) {
   descriptorCount = 0;
   externalTriggerEnabled = false;
   previousDescriptor = nullptr;
+  syncStatus = 0;
 
   this->ownerID = ownerID;
 
@@ -1069,32 +1201,33 @@ void DMAChannel::init(int16_t ownerID) {
 }
 
 
-void DMAChannel::clearDescriptors() { ///// NEEDS TO BE UPDATED SO IT NULLIFIES BOUND
+void DMAChannel::clearDescriptors() { 
+
+  // If primary is bound -> unbind it
+  if (boundPrimary != nullptr) {
+    boundPrimary->unbindPrimary(&primaryDescriptorArray[channelIndex]);
+    boundPrimary = nullptr;
+  }
+
   if (descriptorCount > 1) {
-    // If primary is bound -> unbind it
-    if (boundPrimary != nullptr) {
-      boundPrimary->unbindPrimary(&primaryDescriptorArray[channelIndex]);
-      boundPrimary = nullptr;
-    }
 
     // Get descriptor linked to primary & clear primary using memset
     DmacDescriptor *currentDescriptor 
       = (DmacDescriptor*)primaryDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR;
     memset(&primaryDescriptorArray[channelIndex], 0, sizeof(DmacDescriptor));
 
+    // If applicable -> iterate through linked descriptors & delete them
     for (int16_t i = 0; i < descriptorCount - 1; i++) {
       DmacDescriptor *nextDescriptor
         = (DmacDescriptor*)primaryDescriptorArray[channelIndex].DESCADDR.bit.DESCADDR;
 
-        // Delete descriptor
-        delete currentDescriptor;
-
-      // Move on to next descriptor
+      delete currentDescriptor;
       currentDescriptor = nextDescriptor;
     }
     delete currentDescriptor;
     currentDescriptor = nullptr;
   
+  // No linked descriptors -> just delete primary...
   } else if (descriptorCount == 1) {
     memset(&primaryDescriptorArray[channelIndex], 0, sizeof(DmacDescriptor));
   }
@@ -1141,3 +1274,179 @@ void DMAChannel::unloopDescriptors(bool updateWriteback) {
     }
   }
 }
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> CHECKSUM CHANNEL
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+void ChecksumIRQHandler(DMA_CALLBACK_REASON reason, DMAChannel &source, 
+int16_t descriptorIndex, int16_t currentTrigger, DMA_ERROR error) {
+  ChecksumChannel &chksum = DMA.getChecksumChannel(source.channelIndex);
+
+  // Decrement cycle counter
+  if (reason == REASON_TRANSFER_COMPLETE) {
+    chksum.remainingCycles--;
+  }
+
+  // If finished or error -> call callback, else -> trigger
+  if (chksum.remainingCycles <= 0 || error) {
+    int16_t remainingByteCount = chksum.remainingBytes();
+    chksum.remainingCycles = 0;
+    chksum.callback(error, remainingByteCount);
+    
+  } else {
+    DMAC->SWTRIGCTRL.reg |= (1 << source.channelIndex);
+  }
+}
+
+ChecksumChannel::ChecksumChannel(int16_t index) :  DMAChannel(index),
+  readDesc(nullptr, nullptr, 0), writeDesc(nullptr, nullptr, 0) {}
+
+
+void ChecksumChannel::init() {
+  // init fields & settings
+  remainingCycles = 0;
+  settings.setDefault();
+  
+  // init read & write transfer descriptors & loop them
+  TransferDescriptor *descList[2] = { &writeDesc, &readDesc };
+  setDescriptors(descList, 2, true, false);
+}
+
+bool ChecksumChannel::start(int16_t checksumLength) {
+  // Handle different states & exceptions
+  DMA_STATUS currentStatus = getStatus();
+  if (currentStatus == DMA_CHANNEL_BUSY
+  || currentStatus == DMA_CHANNEL_ERROR
+  || checksumLength % (2 * ((int16_t)mode32 + 1)) != 0) {
+    return false;
+
+  // If suspended -> unsuspend:
+  } else if (currentStatus == DMA_CHANNEL_SUSPENDED) {
+    resume();
+    return true;
+  }
+  // Calculate remaining transfer cycles depending on mode
+  remainingCycles = checksumLength / (2 * ((int16_t)mode32 + 1));
+  writeDesc.setTransferAmount(checksumLength);
+  readDesc.setTransferAmount(checksumLength);
+
+  // If descriptors valid -> trigger transfer
+  if (writeDesc.isValid() && readDesc.isValid()) {
+    trigger();
+  } else {
+    return false;
+  }
+}
+
+bool ChecksumChannel::stop(bool hardStop) {
+  DMA_STATUS currentStatus = getStatus();
+  if (currentStatus != DMA_CHANNEL_BUSY) {
+    return !(currentStatus == DMA_CHANNEL_ERROR);
+  } else {
+
+    // If hard stop -> reset transfer, else -> suspend transfer
+    if (hardStop) {
+      base().resetTransfer(false);
+      remainingCycles = 0;
+    } else {
+      suspend(false);
+    }
+    return true;
+  }
+}
+
+bool ChecksumChannel::isBusy() { return !(syncBusy() || isBusy()); }
+
+int16_t ChecksumChannel::remainingBytes() { return base().remainingBytes(); }
+
+DMA_ERROR ChecksumChannel::getError() { return currentError; }
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> CHECKSUM CHANNEL SETTINGS
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+ChecksumChannel::ChecksumSettings::ChecksumSettings(ChecksumChannel *super) {
+  this->super = super;
+}
+
+ChecksumChannel::ChecksumSettings &ChecksumChannel::ChecksumSettings::setSource(void *sourcePtr,
+  bool correctAddress) {
+  super->writeDesc.setSource(sourcePtr, correctAddress = true);
+  return *this;
+}
+
+ChecksumChannel::ChecksumSettings &ChecksumChannel::ChecksumSettings::setSource(
+  uint32_t sourceAddress, bool correctAddress = true) {
+  super->writeDesc.setSource(sourceAddress, correctAddress);
+  return *this;
+}
+
+ChecksumChannel::ChecksumSettings &ChecksumChannel::ChecksumSettings::setDestination(
+  void *destinationPtr, bool correctAddress = true) {
+  super->writeDesc.setDestination(destinationPtr, correctAddress);
+  return *this;
+}
+
+ChecksumChannel::ChecksumSettings &ChecksumChannel::ChecksumSettings::setDestination(
+  uint32_t destinationAddress, bool correctAddress = true) {
+  super->writeDesc.setDestination(destinationAddress, correctAddress);
+  return *this;
+}
+
+ChecksumChannel::ChecksumSettings &ChecksumChannel::ChecksumSettings::setCRC(CRC_MODE mode) {
+  if ((uint8_t)mode == super->mode32) return *this;
+  super->mode32 = (bool)mode; 
+  return *this;
+}
+
+ChecksumChannel::ChecksumSettings &ChecksumChannel::ChecksumSettings::setStandbyConfig(bool enabledDurringStandby) {
+  super->base().settings.setStandbyConfig(enabledDurringStandby);
+  return *this;
+}
+
+ChecksumChannel::ChecksumSettings &ChecksumChannel::ChecksumSettings::setCallbackFunction(ChecksumCallback *callbackFunc) {
+  super->callback = callbackFunc;
+  return *this;
+}
+
+ChecksumChannel::ChecksumSettings &ChecksumChannel::ChecksumSettings::setPriorityLevel(int16_t priorityLvl) {
+  super->base().settings.setPriorityLevel(priorityLvl);
+  return *this;
+}
+
+void ChecksumChannel::ChecksumSettings::setDefault() {
+
+  // Configure default write descriptor settings
+  super->writeDesc.setDataSize(CHECKSUM_DEFAULT_DATASIZE)
+    .setAction(CHECKSUM_WRITEDESC_DEFAULT_TRANSFER_ACTION)
+    .setTransferAmount(CHECKSUM_DEFAULT_TRANSFER_AMOUNT)
+    .setDestination((uint32_t)&CHECKSUM_WRITEDESC_REQUIRED_DESTINATION,
+       CHECKSUM_WRITEDESC_REQUIRED_CORRECT_DESTADDR)
+    .setIncrementConfig(CHECKSUM_REQUIRED_INCREMENT_CONFIG_SOURCE,
+       CHECKSUM_REQUIRED_INCREMENT_CONFIG_DESTINATION);
+
+  // Configure default read descriptor settings
+  super->readDesc.setDataSize(CHECKSUM_DEFAULT_DATASIZE)
+    .setAction(CHECKSUM_READDESC_DEFAULT_TRANSFER_ACTION)
+    .setTransferAmount(CHECKSUM_DEFAULT_TRANSFER_AMOUNT)
+    .setSource((uint32_t)&CHECKSUM_READDESC_REQUIRED_SOURCE,
+       CHECKSUM_READDESC_REQUIRED_CORRECT_SOURCEADDR)
+    .setIncrementConfig(CHECKSUM_REQUIRED_INCREMENT_CONFIG_SOURCE,
+       CHECKSUM_REQUIRED_INCREMENT_CONFIG_DESTINATION);
+
+  // Reset settings variables
+  super->callback = nullptr;
+  super->mode32 = CHECKSUM_DEFAULT_CHECKSUM32;
+
+  // Set default base settings
+  super->base().settings.setDefault();
+  super->base().settings.setDescriptorsLooped(true, false);
+  super->base().settings.setCallbackFunction(ChecksumIRQHandler);
+}
+
+
+
+
+

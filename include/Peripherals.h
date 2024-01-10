@@ -19,6 +19,8 @@ class UARTBus;
 class AnalogPin;
 class DigitalPin;
 
+typedef void (*I2CCallbackFunction)(I2CSerial &sourceInstance, I2C_STATUS currentStatus);
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> PERIPHERAL MANAGER CLASS (SINGLETON)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -62,23 +64,29 @@ class I2CSerial : public IO {
   public:
     I2CSerial(int16_t sercomNum, uint8_t SDA, uint8_t SCL, int16_t IOID);
 
-    ~I2CSerial(); // TO DO
+    ~I2CSerial() { exit(); }
 
     bool requestData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16);
     
-    bool readData(int16_t bytes, uint32_t datadestinationAddr);
+    bool readData(int16_t bytes, void *datadestinationAddr);
 
     bool writeData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16, 
-      int16_t writeCount, uint32_t dataSourceAddr);
+      int16_t writeCount, void *dataSourceAddr);
+
+    bool resetBus(bool hardReset);
 
     bool dataReady();
 
-    class I2CSettings { // TO DO
+    bool isBusy();
+
+    class I2CSettings { /////////// TO DO
       public:
 
         void setDefault();
 
         bool setBaudrate(int32_t buadrate);
+
+        
 
       protected:
         friend I2CSerial;
@@ -97,7 +105,7 @@ class I2CSerial : public IO {
 
     void resetFields();
 
-    I2C_STATUS updateStatus(int16_t newLastRequest);
+    void updateReg(int16_t regAddr, bool reg16);
 
   private:
     //// PROPERTIES ////
@@ -109,8 +117,7 @@ class I2CSerial : public IO {
     DMAChannel *writeChannel;       // Dealloc using DMAUtil
     TransferDescriptor *readDesc;   // Delete
     TransferDescriptor *writeDesc;  // Delete
-    TransferDescriptor *regDesc;
-    bool reg16;
+    TransferDescriptor *regDesc;    // Delete
 
     //// CACHE //// -> To be accessed by DMA
     uint8_t registerAddr[2];
@@ -119,21 +126,11 @@ class I2CSerial : public IO {
     //// FLAGS ////
     volatile bool criticalError; // Set by I2C interrupt when error detected
     volatile uint8_t busyOpp;    // Reset by DMA interrupt when transfer complete
-    bool dataRequested;          // Set when request data is called successfully
 
     //// SETTINGS ////
     I2CCallbackFunction *callback;
     int32_t baudrate;
 };
-
-
-
-
-
-
-
-
-
 
 
 
@@ -144,8 +141,20 @@ class SPIBus : public IO {
 };
 
 
-class SerialBus : public IO {
+class UARTBus : public IO {
 
+
+
+};
+
+
+class AnalogPin : public IO {
+
+
+};
+
+
+class digitalPin : public IO {
 
 
 };

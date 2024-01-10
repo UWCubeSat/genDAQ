@@ -29,11 +29,13 @@ IO_TYPE IO::getBaseType() { return baseType; }
 void I2CdmaCallback(DMA_CALLBACK_REASON reason, DMAChannel &channel, 
   int16_t triggerType, int16_t descIndex, DMA_ERROR error) {
 
-  // Get I2C IO instance
   I2CSerial *source = static_cast<I2CSerial*>(IOManager.getActiveIO(channel.getOwnerID()));
 
-  // Do interrupt stuff here...
+  
 }
+
+
+//////////////////////////// NEED TO COMPLETE
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -57,51 +59,37 @@ I2CSerial::I2CSerial(int16_t sercomNum, uint8_t SDA, uint8_t SCL, int16_t IOID)
   }
   s = GET_SERCOM(sercomNum); 
 
-  // Initialize DMA & THEN settings! -> ORDER MATTERS
-  initDMA();
-  settings.setDefault();
-  if (!init()) IOManager.abort(this);
+  // Initialize I2C module
+  if(!init()) IOManager.abort(this);
 }
 
 
 bool I2CSerial::requestData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16) {
   
   // If error, bus not idle or busy dma -> return false, else -> reset flags
-  if (criticalError || s->I2CM.STATUS.bit.BUSSTATE != 1 || busyOpp != 0) return false;
+  if (criticalError || s->I2CM.STATUS.bit.BUSSTATE != I2C_BUS_IDLE_STATE 
+  || busyOpp != 0) return false;
   busyOpp = 1;
-  dataRequested = true;
   
   // Save the device address & register length
   this->deviceAddr = deviceAddr;
-  this->reg16 = reg16;
+  updateReg(registerAddr, reg16);
   int16_t regAddrLength = 1 + (int16_t)reg16; 
 
-  if (reg16) { // Configure DMA and I2C peripheral to send 2 bytes
-    this->registerAddr[0] = (uint8_t)(registerAddr >> 8);
-    this->registerAddr[1] = (uint8_t)(registerAddr & UINT8_MAX);
-    writeDesc->setTransferAmount(2);
-    writeDesc->setIncrementConfig(true, true);
-  
-  } else { // Configure DMA and I2C peripheral to send 1 byte
-    this->registerAddr[0] = registerAddr;
-    writeDesc->setTransferAmount(1);
-    writeDesc->setIncrementConfig(false, false);
-  }
-
-  // Set up DMA to write register addr
-  writeDesc->setTransferAmount(regAddrLength);
-  writeDesc->setSource((uint32_t)registerAddr, true);                                                 
-  
-  writeChannel->enableExternalTrigger();
+  // Set up DMA to write register addr                                             
   writeChannel->enable();
   readChannel->reset(true);
+  writeChannel->enableExternalTrigger();
+  writeChannel->setDescriptor(regDesc, true);
   
   // Set up the I2C module
                                                             
   s->I2CM.ADDR.reg = SERCOM_I2CM_ADDR_LENEN              // Enable auto length           
     | SERCOM_I2CM_ADDR_LEN(regAddrLength)                // Set length of data to write
-    | SERCOM_I2CM_ADDR_ADDR(this->deviceAddr << 1 | 0);  // Load address of device into reg -> "0" denotes write req
-  while(s->I2CM.SYNCBUSY.bit.SYSOP);                     // Sync
+    | SERCOM_I2CM_ADDR_ADDR(this->deviceAddr << 1        // Load address of device into reg -> "0" denotes write req
+    | I2C_WRITE_TAG);  
+  while(s->I2CM.SYNCBUSY.bit.SYSOP                       // Sync
+    && s->I2CM.SYNCBUSY.bit.LENGTH);                     
 
   return true;
 }
@@ -110,7 +98,7 @@ bool I2CSerial::requestData(uint8_t deviceAddr, uint16_t registerAddr, bool reg1
 bool I2CSerial::dataReady() {
 
   // If error or data not requested -> return false;
-  if (criticalError || !dataRequested) return false;
+  if (criticalError || deviceAddr == 0) return false;
 
   if (busyOpp == 0                         // DMA transfer was completed
   &&  s->I2CM.STATUS.bit.RXNACK == 0       // ACK was recieved on line
@@ -122,55 +110,128 @@ bool I2CSerial::dataReady() {
 }
 
 
-bool I2CSerial::readData(int16_t bytes, uint32_t dataDestination) {
+bool I2CSerial::readData(int16_t readCount, void *dataDestination) {
 
-  // If data not ready -> cannot read
-  if (!dataReady()) return false;
-  dataRequested = false;
+  // Handle exceptions
+  MIN(readCount, 0);
+  if (!dataReady() || readCount > I2C_MAX_READ) return false;
   busyOpp = 2;
 
   // Set up DMA to read bytes
-  readDesc->setTransferAmount(bytes);
-  readDesc->setDestination(dataDestination, true);
+  uint32_t destAddr = reinterpret_cast<uint32_t>(dataDestination);
+  readDesc->setTransferAmount(readCount);
+  readDesc->setDestination(destAddr, true);
 
   readChannel->enable();
   readChannel->reset(true);
+  readChannel->setAllValid(true);
   readChannel->enableExternalTrigger();
 
   // Send device addr on I2C line
   s->I2CM.ADDR.reg = SERCOM_I2CM_ADDR_LENEN        // Enable auto length           
-    | SERCOM_I2CM_ADDR_LEN(bytes)                  // Set length of data to write
-    | SERCOM_I2CM_ADDR_ADDR(deviceAddr << 1 | 1);  // Load address of device into reg -> "1" indicates read req
-  while(s->I2CM.SYNCBUSY.bit.SYSOP);
+    | SERCOM_I2CM_ADDR_LEN(readCount)              // Set length of data to write
+    | SERCOM_I2CM_ADDR_ADDR(deviceAddr << 1        // Load address of device into reg -> "1" indicates read req
+    | I2C_READ_TAG);  
+  while(s->I2CM.SYNCBUSY.bit.SYSOP                 // Sync
+    && s->I2CM.SYNCBUSY.bit.LENGTH);
 
-  // Clear cached device addr 
+  // Clear cached device addr (also usd as req flag)
   deviceAddr = 0;
   return true;
 }
 
 
 bool I2CSerial::writeData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16, 
-  int16_t writeCount, uint32_t dataSourceAddr) {
-
-  // If critical error, busy bus, or busy opperation -> cannot write
-  if (criticalError || s->I2CM.STATUS.bit.BUSSTATE != 1 || busyOpp != 0) {
+  int16_t writeCount, void *dataSourceAddr) {
+  // Handle exceptions
+  MIN(writeCount, 0);
+  if (criticalError || s->I2CM.STATUS.bit.BUSSTATE != 1 || busyOpp != I2C_BUS_IDLE_STATE
+  || writeCount > I2C_MAX_WRITE) {
     return false;
   }
+  this->deviceAddr = 0;
+  busyOpp = 3;
+
+  // Update register cache & descriptor
+  updateReg(registerAddr, reg16);
+  uint8_t regAddrLength = 1 + (uint8_t)reg16;
 
   // Set up DMA to write bytes
+  uint32_t sourceAddr = reinterpret_cast<uint32_t>(dataSourceAddr);
   writeDesc->setTransferAmount(writeCount);
   writeDesc->setSource(dataSourceAddr, true);
 
+  TransferDescriptor *descs[2] = { regDesc, writeDesc };
+
   writeChannel->enable();
   writeChannel->reset(true);
+  writeChannel->setDescriptors(descs, 2, true, false);
   writeChannel->enableExternalTrigger();
 
-  // Put address
+  // Enable I2C module
+  s->I2CM.ADDR.reg = SERCOM_I2CM_ADDR_LENEN        // Enable auto length           
+    | SERCOM_I2CM_ADDR_LEN(regAddrLength)          // Set length of data to write
+    | SERCOM_I2CM_ADDR_ADDR(deviceAddr << 1        // Load address of device into reg -> "0" denotes write req
+    | I2C_WRITE_TAG); 
+  while(s->I2CM.SYNCBUSY.bit.SYSOP                 // Sync
+    && s->I2CM.SYNCBUSY.bit.LENGTH);
 
+  return true;
 }
 
 
-// Write data
+bool I2CSerial::dataReady() { 
+  return (deviceAddr == 0
+       && busyOpp == 0 
+       && !criticalError
+       && s->I2CM.STATUS.bit.BUSSTATE == 1 
+       && s->I2CM.STATUS.bit.RXNACK == 0); 
+}
+
+
+bool I2CSerial::isBusy() { 
+  return (busyOpp != 0
+       || s->I2CM.STATUS.bit.BUSSTATE == 3
+       || s->I2CM.STATUS.bit.BUSSTATE == 2); 
+}
+
+
+bool I2CSerial::resetBus(bool hardReset) {
+  // If DMA active -> stop it
+  if (busyOpp != 0) {
+    writeChannel->disable(false);
+    readChannel->disable(false);
+    busyOpp = 0;
+  }
+
+  if (hardReset) {
+    exit();
+    if(!init()) {
+      return false;
+    }
+  } else {
+    // Send stop cmd & attempt to force idle state
+    s->I2CM.CTRLB.bit.CMD = I2C_STOP_CMD;
+    while(s->I2CM.SYNCBUSY.bit.SYSOP);
+    s->I2CM.STATUS.bit.BUSSTATE = I2C_BUS_IDLE_STATE;
+    while(s->I2CM.SYNCBUSY.bit.SYSOP);
+
+    // If idle -> reset flags
+    if (s->I2CM.STATUS.bit.BUSSTATE == I2C_BUS_IDLE_STATE) {
+      deviceAddr = 0;
+      registerAddr[0] = 0;
+      registerAddr[1] = 0;
+    }
+  }
+
+  // Ensure bus state is correct
+  if (s->I2CM.STATUS.bit.BUSSTATE != 1) {
+    return false;
+  } else {
+    return true;
+  }
+}
+
 
 
 bool I2CSerial::init() {
@@ -180,7 +241,6 @@ bool I2CSerial::init() {
   ||  g_APinDescription[SCL].ulPinType != PIO_SERCOM_ALT
   ||  g_APinDescription[SDA].ulPinType != PIO_SERCOM 
   ||  g_APinDescription[SDA].ulPinType != PIO_SERCOM_ALT) {
-    IOManager.abort(this);
     return false;
   }
   // Configure the pins
@@ -217,9 +277,14 @@ bool I2CSerial::init() {
   s->I2CM.CTRLA.bit.ENABLE = 1;
   while(s->I2CM.SYNCBUSY.bit.ENABLE);
 
-  // Set bus to idle & return
+  // Set bus to idle
   s->I2CM.STATUS.bit.BUSSTATE = 1;
   while(s->I2CM.SYNCBUSY.bit.SYSOP);
+
+  // Initialize DMA & THEN settings! -> ORDER MATTERS
+  initDMA();
+  settings.setDefault();
+
   return true;
 }
 
@@ -241,38 +306,42 @@ bool I2CSerial::initDMA() {
 
   // Configure descriptors/channels with base settings
   readDesc->
-     setDataSize(I2C_READDESC_DATASIZE)
-    .setAction(I2C_READDESC_TRANSFERACTION)
-    .setIncrementConfig(I2C_READDESC_INCREMENTCONFIG_SOURCE, 
-        I2C_READDESC_INCREMENTCONFIG_DEST)
+     setDataSize(1)
+    .setAction(ACTION_NONE)
+    .setIncrementConfig(false, true)
     .setSource((uint32_t)&s->I2CM.DATA.reg, false);
 
   writeDesc-> 
-     setDataSize(I2C_WRITEDESC_DATASIZE)
-    .setAction(I2C_WRITEDESC_TRANSFERACTION)
-    .setIncrementConfig(I2C_WRITEDESC_INCREMENTCONFIG_SOURCE,
-        I2C_WRITEDESC_INCREMENTCONFIG_DEST)
+     setDataSize(1)
+    .setAction(ACTION_NONE)
+    .setIncrementConfig(true, false)
     .setDestination((uint32_t)&s->I2CM.DATA.reg, false);                 //////// NOTE -> ALL DMAC SOURCE/DESTINATIONS MAY BE INCORRECT...
 
-  
+  regDesc-> 
+     setDataSize(1)
+    .setAction(ACTION_NONE)
+    .setSource((uint32_t)&this->registerAddr)
+    .setDestination((uint32_t)&s->I2CM.DATA.reg);
 
   readChannel->settings
     .setCallbackFunction(&I2CdmaCallback)
-    .setBurstLength(I2C_READCHANNEL_BURSTLENGTH)
-    .setTriggerAction(I2C_READCHANNEL_TRIGGERACTION)
-    .setStandbyConfig(I2C_READCHANNEL_STANDBYCONFIG)
-    .setExternalTrigger((DMA_TRIGGER)SERCOM_REF[sercomNum].DMAReadTrigger);
+    .setBurstLength(1)
+    .setTriggerAction(ACTION_TRANSFER_ALL)
+    .setStandbyConfig(false)
+    .setExternalTrigger((DMA_TRIGGER)SERCOM_REF[sercomNum].DMAReadTrigger)
+    .setDescriptorsLooped(false, false);
 
   writeChannel->settings
     .setCallbackFunction(&I2CdmaCallback)
-    .setBurstLength(I2C_READCHANNEL_BURSTLENGTH)
-    .setTriggerAction(I2C_READCHANNEL_TRIGGERACTION)
-    .setStandbyConfig(I2C_READCHANNEL_STANDBYCONFIG)
-    .setExternalTrigger((DMA_TRIGGER)SERCOM_REF[sercomNum].DMAWriteTrigger);
+    .setBurstLength(1)
+    .setTriggerAction(ACTION_TRANSFER_ALL)
+    .setStandbyConfig(false)
+    .setExternalTrigger((DMA_TRIGGER)SERCOM_REF[sercomNum].DMAWriteTrigger)
+    .setDescriptorsLooped(false, false);
 
   // Add descriptors to channels (bind & loop them)
-  readChannel->setDescriptor(readDesc, true, true);
-  writeChannel->setDescriptor(writeDesc, true, true);
+  readChannel->setDescriptor(readDesc, true);
+  writeChannel->setDescriptor(writeDesc, true);
 
   // Disable external triggers by default
   readChannel->disableExternalTrigger();
@@ -283,6 +352,16 @@ bool I2CSerial::initDMA() {
 
 
 void I2CSerial::exit() {
+
+  //If bus active -> send stop cmd
+  if (s->I2CM.STATUS.bit.BUSSTATE != I2C_BUS_IDLE_STATE) {
+    s->I2CM.CTRLB.bit.CMD = I2C_STOP_CMD;
+    while(s->I2CM.SYNCBUSY.bit.SYSOP);
+  }
+
+  // Free DMA channels
+  DMA.freeChannel(readChannel);
+  DMA.freeChannel(writeChannel);
 
   // Return ports to standard gpio
   PORT->Group[g_APinDescription[SCL].ulPort].PINCFG[g_APinDescription[SCL].ulPin].reg = 0;  
@@ -303,8 +382,11 @@ void I2CSerial::exit() {
   NVIC_ClearPendingIRQ(SERCOM_REF[sercomNum].baseIRQ);
   NVIC_DisableIRQ(SERCOM_REF[sercomNum].baseIRQ);
 
-  // DELETE OBJ BEFORE RESETTING!!!
-  resetFields();
+  // Delete descriptors & reset fields
+  delete readDesc;
+  delete writeDesc;
+  delete regDesc;
+  resetFields();         
 }
 
 
@@ -315,6 +397,7 @@ void I2CSerial::resetFields() {
   writeChannel = nullptr;      
   readDesc = nullptr;  
   writeDesc = nullptr;
+  regDesc = nullptr;
   bool reg16 = false;
 
   // Cache
@@ -324,7 +407,21 @@ void I2CSerial::resetFields() {
   // State / Flags
   criticalError = false;
   busyOpp = 0;
-  dataRequested = false;
+}
+
+
+void I2CSerial::updateReg(int16_t registerAddr, bool reg16) {
+  if (reg16) { // Configure DMA and I2C peripheral to send 2 bytes
+    this->registerAddr[0] = (uint8_t)(registerAddr >> 8);
+    this->registerAddr[1] = (uint8_t)(registerAddr & UINT8_MAX);
+    regDesc->setTransferAmount(2);
+    regDesc->setIncrementConfig(true, false);
+  
+  } else { // Configure DMA and I2C peripheral to send 1 byte
+    this->registerAddr[0] = registerAddr;
+    regDesc->setTransferAmount(1);
+    regDesc->setIncrementConfig(false, false);
+  }
 }
 
 

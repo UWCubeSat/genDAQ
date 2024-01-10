@@ -16,6 +16,12 @@
   __x > __high ? __high : (__x < __low ? __low : __x);\
 })
 
+// Works with signed or unsigned numbers
+#define SDIV_CEIL(x, y) x / y + !(((x < 0) != (y < 0)) || !(x % y));
+
+// Works with ONLY POSITIVE numbers
+#define UDIV_CEIL(x, y) x / y + !!(x % y);
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> ERROR SYSTEM
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -43,15 +49,14 @@ enum ASSERT_ID : uint8_t {
 #define DMA_DESCRIPTOR_VALID_COUNT 3
 
 //// DMA DEFAULT DESCRIPTOR SETTINGS ////
-#define DMA_DEFAULT_SOURCE 0
-#define DMA_DEFAULT_DESTINATION 0
-#define DMA_DEFAULT_TRANSFER_AMOUNT 1
 #define DMA_DEFAULT_DATA_SIZE DMAC_BTCTRL_BEATSIZE_BYTE_Val
 #define DMA_DEFAULT_STEPSIZE DMAC_BTCTRL_STEPSIZE_X1_Val
 #define DMA_DEFAULT_STEPSELECTION DMAC_BTCTRL_STEPSEL_SRC_Val
 #define DMA_DEFAULT_TRANSFER_ACTION DMAC_BTCTRL_BLOCKACT_SUSPEND_Val
 #define DMA_DEFAULT_INCREMENT_SOURCE 1
 #define DMA_DEFAULT_INCREMENT_DESTINATION 1
+#define DMA_DEFAULT_CRC_MODE 0
+#define DMA_DEFAULT_CRC_LENGTH 16
 
 //// DMA DEFAULT CHANNEL SETTINGS ////
 #define DMA_DEFAULT_TRANSMISSION_THRESHOLD 0
@@ -61,8 +66,23 @@ enum ASSERT_ID : uint8_t {
 #define DMA_DEFAULT_RUN_STANDBY 1
 #define DMA_DEFAULT_PRIORITY_LVL 1
 
-typedef void (*DMACallbackFunction)(DMA_CALLBACK_REASON reason, DMAChannel &source, 
-int16_t descriptorIndex, int16_t currentTrigger, DMA_ERROR error);
+//// CHECKSUM CHANNEL ////
+#define CHECKSUM_MAX_TRANSFER_AMOUNT 4
+
+
+//// CHECKSUM CHANNEL SETTINGS ////
+#define CHECKSUM_DEFAULT_DATASIZE 1
+#define CHECKSUM_DEFAULT_SLEEPCONFIG false
+#define CHECKSUM_READDESC_DEFAULT_TRANSFER_ACTION ACTION_SUSPEND
+#define CHECKSUM_WRITEDESC_DEFAULT_TRANSFER_ACTION ACTION_NONE
+#define CHECKSUM_DEFAULT_TRANSFER_AMOUNT 4
+#define CHECKSUM_READDESC_REQUIRED_SOURCE DMAC->CRCCHKSUM.reg
+#define CHECKSUM_WRITEDESC_REQUIRED_DESTINATION DMAC->CRCDATAIN.reg
+#define CHECKSUM_READDESC_REQUIRED_CORRECT_SOURCEADDR false
+#define CHECKSUM_WRITEDESC_REQUIRED_CORRECT_DESTADDR false
+#define CHECKSUM_REQUIRED_INCREMENT_CONFIG_SOURCE true
+#define CHECKSUM_REQUIRED_INCREMENT_CONFIG_DESTINATION true
+#define CHECKSUM_DEFAULT_CHECKSUM32 false
 
 enum DMA_TARGET : uint8_t {
   SOURCE,
@@ -193,6 +213,11 @@ enum DMA_TRIGGER : int16_t {
   TRIGGER_QSPI_TX           = 84
 };
 
+enum CRC_MODE : uint8_t {
+  CRC_16 = 0,
+  CRC_32 = 1
+};
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> IO
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -206,25 +231,18 @@ enum IO_TYPE {
 
 /////////////////////////////////////////// I2C SERIAL ////////////////////////////////////////////
 
+//// I2C SERIAL CLASS ////
 #define I2C_IRQ_PRIORITY 1
-#define I2C_DEFAULT_BAUDRATE 100000
-#define I2CBUS_CACHE_SIZE 64
+#define I2C_MAX_READ 64
+#define I2C_MAX_WRITE 32
+#define I2C_WRITE_TAG 0
+#define I2C_READ_TAG 1
+#define I2C_STOP_CMD 3
+#define I2C_BUS_IDLE_STATE 1
 
-#define I2C_READDESC_DATASIZE 1
-#define I2C_READDESC_INCREMENTCONFIG_SOURCE false
-#define I2C_READDESC_INCREMENTCONFIG_DEST true
-#define I2C_READDESC_TRANSFERACTION ACTION_NONE
-#define I2C_READCHANNEL_TRIGGERACTION ACTION_TRANSFER_BURST
-#define I2C_READCHANNEL_BURSTLENGTH 1
-#define I2C_READCHANNEL_STANDBYCONFIG false
-#define I2C_READCHANNEL_TRANSFERACTION 
-#define I2C_WRITEDESC_DATASIZE 1
-#define I2C_WRITEDESC_INCREMENTCONFIG_SOURCE true
-#define I2C_WRITEDESC_INCREMENTCONFIG_DEST false
-#define I2C_WRITEDESC_TRANSFERACTION ACTION_NONE
-#define I2C_WRITECHANNEL_TRIGGERACTION ACTION_TRANSFER_ALL
-#define I2C_WRITECHANNEL_BURSTLENGTH 1
-#define I2C_WRITECHANNEL_STANDBYCONFIG false
+//// I2C SETTINGS ////
+#define I2C_DEFAULT_BAUDRATE 100000
+
 
 enum I2C_STATUS : uint8_t {
   I2C_IDLE,
@@ -234,8 +252,6 @@ enum I2C_STATUS : uint8_t {
   I2C_READ_BUSY,
   I2C_ERROR
 };
-
-typedef void (*I2CCallbackFunction)(I2CSerial &sourceInstance, I2C_STATUS currentStatus);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> SERCOM
