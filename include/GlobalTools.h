@@ -23,6 +23,6 @@ class ErrorSys_ {
 
 
 };
-extern ErrorSys_ &ErrorSys;
+extern ErrorSys_ &Error;
 
 

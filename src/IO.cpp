@@ -1,5 +1,54 @@
 
-#include <Peripherals.h>
+#include <IO.h>
+
+inline Sercom *GET_SERCOM(int16_t sercomNum) {
+  Sercom *s = SERCOM0;
+  switch(sercomNum) {
+    case 0: s = SERCOM0;
+    case 1: s = SERCOM1;
+    case 2: s = SERCOM2;
+    case 3: s = SERCOM3;
+    case 4: s = SERCOM4;
+    case 5: s = SERCOM5;
+  }
+  return s;
+}
+
+inline int16_t GET_SERCOM_NUM(Sercom *s) {
+  if (s == SERCOM0) {
+    return 0;
+  } else if (s == SERCOM1) {
+    return 1;
+  } else if (s == SERCOM2) {
+    return 2;
+  } else if (s == SERCOM3) {
+    return 3;
+  } else if (s == SERCOM4) {
+    return 4;
+  } else if (s == SERCOM5) {
+    return 5;
+  } else {
+    return -1;
+  }
+}
+
+extern const SERCOM_REF_OBJ SERCOM_REF[] = {
+  {SERCOM0_DMAC_ID_RX, SERCOM0_DMAC_ID_TX, SERCOM0_GCLK_ID_CORE, SERCOM0_0_IRQn},
+  {SERCOM1_DMAC_ID_RX, SERCOM1_DMAC_ID_TX, SERCOM1_GCLK_ID_CORE, SERCOM1_0_IRQn},
+  {SERCOM2_DMAC_ID_RX, SERCOM2_DMAC_ID_TX, SERCOM2_GCLK_ID_CORE, SERCOM2_0_IRQn},
+  {SERCOM3_DMAC_ID_RX, SERCOM3_DMAC_ID_TX, SERCOM3_GCLK_ID_CORE, SERCOM3_0_IRQn},
+  {SERCOM4_DMAC_ID_RX, SERCOM4_DMAC_ID_TX, SERCOM4_GCLK_ID_CORE, SERCOM4_0_IRQn},
+  {SERCOM5_DMAC_ID_RX, SERCOM5_DMAC_ID_TX, SERCOM5_GCLK_ID_CORE, SERCOM5_0_IRQn} 
+};
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> SERCOM_INTERRUPT_HANDLERS
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+void SercomIRQHandler() {
+
+}
+
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -8,20 +57,7 @@
 
 int16_t IO::getIOID() { return IOID; }
 
-IO_TYPE IO::getBaseType() { return baseType; }
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-///// SECTION -> SERCOM_INTERRUPT_HANDLERS
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-void SERCOM0_0_Handler(void) {
-  
-}
-
-void SERCOM0_0_Handler(void) __attribute__((weak, alias("SERCOM0_0_Handler")));  // Re-route all Sercom 0 handler
-void SERCOM0_1_Handler(void) __attribute__((weak, alias("SERCOM0_0_Handler")));
-void SERCOM0_2_Handler(void) __attribute__((weak, alias("SERCOM0_0_Handler")));
-void SERCOM0_3_Handler(void) __attribute__((weak, alias("SERCOM0_0_Handler")));
+IO_TYPE IO::getType() { return baseType; }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> I2C DMA INTERRUPT CALLBACK
@@ -87,21 +123,6 @@ bool I2CSerial::requestData(uint8_t deviceAddr, uint16_t registerAddr, bool reg1
 }
 
 
-bool I2CSerial::dataReady() {
-
-  // If error or data not requested -> return false;
-  if (criticalError || deviceAddr == 0) return false;
-
-  if (busyOpp == 0                         // DMA transfer was completed
-  &&  s->I2CM.STATUS.bit.RXNACK == 0       // ACK was recieved on line
-  &&  s->I2CM.STATUS.bit.BUSSTATE == 1) {  // Bus is idle 
-      return true;                         // -> good to go!
-  } else { 
-    return false;                          // else -> not ready...
-  } 
-}
-
-
 bool I2CSerial::readData(int16_t readCount, void *dataDestination) {
 
   // Handle exceptions
@@ -151,7 +172,7 @@ bool I2CSerial::writeData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16,
   // Set up DMA to write bytes
   uint32_t sourceAddr = reinterpret_cast<uint32_t>(dataSourceAddr);
   writeDesc->setTransferAmount(writeCount);
-  writeDesc->setSource(dataSourceAddr, true);
+  writeDesc->setSource(sourceAddr, true);
 
   TransferDescriptor *descs[2] = { regDesc, writeDesc };
 
@@ -174,6 +195,7 @@ bool I2CSerial::writeData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16,
 
 bool I2CSerial::dataReady() { 
   return (deviceAddr == 0
+       && criticalError == ERROR_NONE
        && busyOpp == 0 
        && !criticalError
        && s->I2CM.STATUS.bit.BUSSTATE == 1 
@@ -317,8 +339,8 @@ bool I2CSerial::initDMA() {
   regDesc-> 
      setDataSize(1)
     .setAction(ACTION_NONE)
-    .setSource((uint32_t)&this->registerAddr)
-    .setDestination((uint32_t)&s->I2CM.DATA.reg);
+    .setSource((uint32_t)&this->registerAddr, true)
+    .setDestination((uint32_t)&s->I2CM.DATA.reg, false);
 
   readChannel->settings
     .setCallbackFunction(&I2CdmaCallback)
@@ -527,6 +549,12 @@ I2CSerial::I2CSettings &I2CSerial::I2CSettings::changeCTRLA(const uint32_t clear
 ///// SECTION -> SPI SERIAL CLASS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
+SPISerial::SPISerial(Sercom *s, int16_t SCK, int16_t PICO, int16_t POCI, int16_t CS) :
+  s(s), SCK(SCK), PICO(PICO), POCI(POCI), CS(CS) {
+
+}
+
+
 void SPISerial::init() {
   NVIC_ClearPendingIRQ(SERCOM_REF[sNum].baseIRQ);
   NVIC_DisableIRQ(SERCOM_REF[sNum].baseIRQ);
@@ -551,7 +579,6 @@ SPISerial::SPISettings &SPISerial::SPISettings::changeCTRLA(uint32_t resetMask, 
     super->s->SPI.CTRLA.bit.ENABLE = 0;
     while(super->s->SPI.SYNCBUSY.bit.ENABLE);
     super->s->SPI.CTRLA.reg &= ~resetMask;
-    
   }
 
 }

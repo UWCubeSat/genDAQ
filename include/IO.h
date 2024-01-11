@@ -10,7 +10,7 @@
 
 #include <GlobalTools.h>
 #include <GlobalDefs.h>
-#include <DMAUtility.h>
+#include <DMA.h>
 
 class IO;
 class I2CSerial;
@@ -20,25 +20,44 @@ class UARTBus;
 class AnalogPin;
 class DigitalPin;
 
+void SercomIRQHandler();
+
 typedef void (*IOCallback)(int16_t sourceSercomID, int16_t param1, int16_t param2);
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-///// SECTION -> SERIAL I2C PERIPHERAL
+///// SECTION -> IO BASE CLASS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 class IO {
   public:
-    IO() {}
 
     int16_t getIOID();
     
-    IO_TYPE getBaseType();
+    IO_TYPE getType();
 
   protected:
     int16_t IOID;
     IO_TYPE baseType = TYPE_UNKNOWN;
+    bool enabled;
+
+    IO() {}
+
+    Sercom *allocSercom();
+
+    int16_t allocPin();
+
+    void freeSercom(Sercom *freedInstance);
+
+    void freePin(int16_t pinNum);
+
+    static Sercom sercomPeriphs[IO_MAX_SERCOM]; 
+    static bool ports[IO_MAX_PORTS];
 };
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> I2C SERIAL CLASS
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 class I2CSerial : public IO {
   public:
@@ -59,7 +78,7 @@ class I2CSerial : public IO {
 
     bool isBusy();
 
-    ERROR_ID getError(); /////////// TO DO
+    ERROR_ID getError();
 
     struct I2CSettings { 
 
@@ -118,8 +137,8 @@ class I2CSerial : public IO {
     const uint8_t SCL;
     int16_t sNum;
     Sercom *s;                      // Dont Delete
-    TransferChannel *readChannel;        // Dealloc using DMAUtil
-    TransferChannel *writeChannel;       // Dealloc using DMAUtil
+    TransferChannel *readChannel;   // Dealloc using DMAUtil
+    TransferChannel *writeChannel;  // Dealloc using DMAUtil
     TransferDescriptor *readDesc;   // Delete
     TransferDescriptor *writeDesc;  // Delete
     TransferDescriptor *regDesc;    // Delete
@@ -141,12 +160,14 @@ class I2CSerial : public IO {
     int32_t baudrate;
 };
 
-
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> SPI SERIAL CLASS
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 class SPISerial : public IO {
   public:
 
-    SPISerial(Sercom *s, int16_t SCK, int16_t PICO, int16_t POCI, int16_t CS) {}
+    SPISerial(Sercom *s, int16_t SCK, int16_t PICO, int16_t POCI, int16_t CS);
 
     bool readData(int16_t byteCount, uint32_t dataDestinationAddr);
 
@@ -163,20 +184,23 @@ class SPISerial : public IO {
     void setDefault();
 
     private:
+      friend SPISerial;
       SPISerial *super;
       explicit SPISettings(SPISerial *super);
 
       SPISettings & changeCTRLA(const uint32_t resetMask, const uint32_t setMask);
 
       SPISettings &changeCTRLB(const uint32_t resetMask, const uint32_t setMask);
-  };
+  }settings{this};
 
 
   private:
-    const int16_t SCK;
-    const int16_t PICO;
-    const int16_t POCI;
-    const int16_t CS; 
+    friend SPISettings;
+
+    int16_t SCK;
+    int16_t PICO;
+    int16_t POCI;
+    int16_t CS; 
     Sercom *s;
     int16_t sNum;
 
@@ -186,6 +210,9 @@ class SPISerial : public IO {
 
 };
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> UART SERIAL CLASS
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 class UARTBus : public IO {
 
@@ -193,11 +220,19 @@ class UARTBus : public IO {
 
 };
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> ANALOG PIN CLASS
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
 
 class AnalogPin : public IO {
 
 
 };
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> DIGITAL PIN CLASS
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 class digitalPin : public IO {

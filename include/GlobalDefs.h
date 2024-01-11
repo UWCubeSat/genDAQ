@@ -34,7 +34,9 @@ enum ERROR_ID : uint8_t {
   ERROR_SETTINGS_OTHER,
   ERROR_DMA_TRANSFER,
   ERROR_DMA_CRC,
-  ERROR_DMA_DESCRIPTOR
+  ERROR_DMA_DESCRIPTOR,
+
+  ERROR_COM_TIMEOUT
 };
 
 enum ASSERT_ID : uint8_t {
@@ -90,24 +92,22 @@ enum ASSERT_ID : uint8_t {
 #define CHECKSUM_REQUIRED_INCREMENT_CONFIG_DESTINATION true
 #define CHECKSUM_DEFAULT_CHECKSUM32 false
 
+//// ENUMS ////
 enum DMA_TARGET : uint8_t {
   SOURCE,
   DESTINATION
 };
-
 enum DMA_TRANSFER_ACTION : uint8_t {
   ACTION_NONE = 0,
   ACTION_BLOCK_INTERRUPT = 1,
   ACTION_SUSPEND = 2,
   ACTION_SUSPEND_BLOCK_INTERRUPT = 3
 };
-
 enum DMA_TRIGGER_ACTION : uint8_t {
   ACTION_TRANSFER_BLOCK = 0,
   ACTION_TRANSFER_BURST = 2,
   ACTION_TRANSFER_ALL = 3
 };
-
 enum DMA_STATUS : uint8_t {
   DMA_CHANNEL_BUSY,
   DMA_CHANNEL_SUSPENDED,
@@ -115,7 +115,6 @@ enum DMA_STATUS : uint8_t {
   DMA_CHANNEL_IDLE,
   DMA_CHANNEL_DISABLED
 };
-
 enum DMA_CALLBACK_REASON : uint8_t {
   REASON_SUSPENDED,
   REASON_TRANSFER_COMPLETE_STOPPED,
@@ -123,7 +122,6 @@ enum DMA_CALLBACK_REASON : uint8_t {
   REASON_ERROR,
   REASON_UNKNOWN
 };
-
 enum DMA_TRIGGER : int16_t {
   TRIGGER_SOFTWARE          = 0,
   TRIGGER_RTC_TIMESTAMP     = 1,
@@ -211,7 +209,6 @@ enum DMA_TRIGGER : int16_t {
   TRIGGER_QSPI_RX           = 83,
   TRIGGER_QSPI_TX           = 84
 };
-
 enum CRC_MODE : uint8_t {
   CRC_16 = 0,
   CRC_32 = 1
@@ -223,6 +220,7 @@ enum CRC_MODE : uint8_t {
 
 #define IO_MAX_INSTANCES 10
 #define IO_MAX_SERCOM 5
+#define IO_MAX_PORTS 25
 
 enum IO_TYPE {
   TYPE_UNKNOWN,
@@ -279,47 +277,15 @@ struct SERCOM_REF_OBJ {
   IRQn_Type baseIRQ;
 };
 
-inline Sercom *GET_SERCOM(int16_t sercomNum) {
-  Sercom *s = SERCOM0;
-  switch(sercomNum) {
-    case 0: s = SERCOM0;
-    case 1: s = SERCOM1;
-    case 2: s = SERCOM2;
-    case 3: s = SERCOM3;
-    case 4: s = SERCOM4;
-    case 5: s = SERCOM5;
-  }
-  return s;
-}
 
-inline int16_t GET_SERCOM_NUM(Sercom *s) {
-  if (s == SERCOM0) {
-    return 0;
-  } else if (s == SERCOM1) {
-    return 1;
-  } else if (s == SERCOM2) {
-    return 2;
-  } else if (s == SERCOM3) {
-    return 3;
-  } else if (s == SERCOM4) {
-    return 4;
-  } else if (s == SERCOM5) {
-    return 5;
-  } else {
-    return -1;
-  }
-}
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> COM CLASS
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
-extern const SERCOM_REF_OBJ SERCOM_REF[] = {
-  {SERCOM0_DMAC_ID_RX, SERCOM0_DMAC_ID_TX, SERCOM0_GCLK_ID_CORE, SERCOM0_0_IRQn},
-  {SERCOM1_DMAC_ID_RX, SERCOM1_DMAC_ID_TX, SERCOM1_GCLK_ID_CORE, SERCOM1_0_IRQn},
-  {SERCOM2_DMAC_ID_RX, SERCOM2_DMAC_ID_TX, SERCOM2_GCLK_ID_CORE, SERCOM2_0_IRQn},
-  {SERCOM3_DMAC_ID_RX, SERCOM3_DMAC_ID_TX, SERCOM3_GCLK_ID_CORE, SERCOM3_0_IRQn},
-  {SERCOM4_DMAC_ID_RX, SERCOM4_DMAC_ID_TX, SERCOM4_GCLK_ID_CORE, SERCOM4_0_IRQn},
-  {SERCOM5_DMAC_ID_RX, SERCOM5_DMAC_ID_TX, SERCOM5_GCLK_ID_CORE, SERCOM5_0_IRQn} 
-};
-
-
+#define COM_SEND_MAX 64
+#define COM_MAX_CACHE_SIZE 1024
+#define COM_EP_OUT 3
+#define COM_EP_IN 2
 
 
 

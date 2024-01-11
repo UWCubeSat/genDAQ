@@ -1,5 +1,5 @@
 
-#include <DMAUtility.h>
+#include <DMA.h>
 
 //// FORWARD DECLARATIONS ////
 int16_t getTrigger(bool swTriggerFlag);
@@ -277,7 +277,7 @@ TransferDescriptor::TransferDescriptor(void *source, void *destination,
 }
 
 TransferDescriptor &TransferDescriptor::setSource(uint32_t sourceAddr,
-  bool correctAddress = true) {
+  bool correctAddress) {
   if (sourceAddr == 0) return *this;
   if (correctAddress) {
     baseSourceAddr = sourceAddr;
@@ -305,7 +305,7 @@ TransferDescriptor &TransferDescriptor::setSource(void *sourcePtr, bool correctA
 }
 
 TransferDescriptor &TransferDescriptor::setDestination(uint32_t destinationAddr, 
-  bool correctAddress = true) {
+  bool correctAddress) {
   if (destinationAddr == 0) return *this;
   if (correctAddress) {
     baseDestAddr = destinationAddr;
@@ -324,7 +324,7 @@ TransferDescriptor &TransferDescriptor::setDestination(uint32_t destinationAddr,
   return *this;
 }
 
-TransferDescriptor &TransferDescriptor::setDestination(void *destinationPtr, bool correctAddress = true) {
+TransferDescriptor &TransferDescriptor::setDestination(void *destinationPtr, bool correctAddress) {
   if (destinationPtr != nullptr) {
     uint32_t addr = reinterpret_cast<uint32_t>(destinationPtr);
     setDestination(addr, correctAddress);
@@ -672,7 +672,7 @@ int16_t descriptorIndex, bool bindDescriptor) {
 
 
 bool TransferChannel::addDescriptor(TransferDescriptor *descriptor, int16_t descriptorIndex, 
-  bool updateWriteback, bool bindDescriptor = false) {
+  bool updateWriteback, bool bindDescriptor) {
 
   DmacDescriptor *targetDescriptor = nullptr;
   DmacDescriptor *previousDescriptor = nullptr;
@@ -1414,19 +1414,19 @@ ChecksumGen::ChecksumSettings &ChecksumGen::ChecksumSettings::setSource(void *so
 }
 
 ChecksumGen::ChecksumSettings &ChecksumGen::ChecksumSettings::setSource(
-  uint32_t sourceAddress, bool correctAddress = true) {
+  uint32_t sourceAddress, bool correctAddress) {
   super->writeDesc.setSource(sourceAddress, correctAddress);
   return *this;
 }
 
 ChecksumGen::ChecksumSettings &ChecksumGen::ChecksumSettings::setDestination(
-  void *destinationPtr, bool correctAddress = true) {
+  void *destinationPtr, bool correctAddress) {
   super->writeDesc.setDestination(destinationPtr, correctAddress);
   return *this;
 }
 
 ChecksumGen::ChecksumSettings &ChecksumGen::ChecksumSettings::setDestination(
-  uint32_t destinationAddress, bool correctAddress = true) {
+  uint32_t destinationAddress, bool correctAddress) {
   super->writeDesc.setDestination(destinationAddress, correctAddress);
   return *this;
 }

@@ -7,8 +7,6 @@ class DMAUtility;
 class TransferChannel;
 class ChecksumGen;
 class TransferDescriptor;
-struct TransferChannel::TransferSettings;
-struct ChecksumGen::ChecksumSettings;
 
 typedef void (*DMACallbackFunction)(DMA_CALLBACK_REASON reason, TransferChannel &source, 
 int16_t descriptorIndex, int16_t currentTrigger, ERROR_ID error);
@@ -64,11 +62,11 @@ class TransferDescriptor {
   public:
     TransferDescriptor(void *source, void *destination, uint8_t transferAmountBytes);
 
-    TransferDescriptor &setSource(uint32_t sourceAddr, bool correctAddress = true);
-    TransferDescriptor &setSource(void *sourcePtr, bool correctAddress = true);
+    TransferDescriptor &setSource(uint32_t sourceAddr, bool correctAddress);
+    TransferDescriptor &setSource(void *sourcePtr, bool correctAddress);
 
-    TransferDescriptor &setDestination(uint32_t destinationAddr, bool correctAddress = true);
-    TransferDescriptor &setDestination(void *destinationPtr, bool correctAddress = true);
+    TransferDescriptor &setDestination(uint32_t destinationAddr, bool correctAddress);
+    TransferDescriptor &setDestination(void *destinationPtr, bool correctAddress);
 
     TransferDescriptor &setTransferAmount(uint16_t byteCount);
 
@@ -104,15 +102,15 @@ class TransferChannel {
     const int16_t channelIndex;
 
     bool setDescriptors(TransferDescriptor **descriptorArray, int16_t count, 
-      bool bindDescriptors = false, bool udpateWriteback = false); 
+      bool bindDescriptors, bool udpateWriteback); 
 
-    bool setDescriptor(TransferDescriptor *descriptor, bool bindDescriptor = false);
+    bool setDescriptor(TransferDescriptor *descriptor, bool bindDescriptor);
 
     bool replaceDescriptor(TransferDescriptor *updatedDescriptor, int16_t descriptorIndex,
-      bool bindDescriptor = false);
+      bool bindDescriptor);
 
     bool addDescriptor(TransferDescriptor *descriptor, int16_t descriptorIndex,
-      bool bindDescriptor = false, bool updateWriteback);
+      bool bindDescriptor, bool updateWriteback);
 
     bool removeDescriptor(int16_t descriptorIndex, bool updateWriteback); 
 
@@ -275,11 +273,11 @@ class ChecksumGen {
 
     struct ChecksumSettings {
 
-      ChecksumSettings &setSource(uint32_t sourceAddress, bool correctAddress = true);
-      ChecksumSettings &setSource(void *sourcePtr, bool correctAddress = true);
+      ChecksumSettings &setSource(uint32_t sourceAddress, bool correctAddress);
+      ChecksumSettings &setSource(void *sourcePtr, bool correctAddress);
 
-      ChecksumSettings &setDestination(uint32_t sourceAddress, bool correctAddress = true);
-      ChecksumSettings &setDestination(void *destinationPtr, bool correctAddress = true);
+      ChecksumSettings &setDestination(uint32_t sourceAddress, bool correctAddress);
+      ChecksumSettings &setDestination(void *destinationPtr, bool correctAddress);
 
       ChecksumSettings &setCRC(CRC_MODE mode);
 
