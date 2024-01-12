@@ -7,26 +7,55 @@ COM_ &COM;
 ///// SECTION -> COM INTERRUPT HANDLER
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-void COMHandler(void) {
+void COMHandler(void) {   
+  uint8_t interruptReason = COM_REASON_UNKNOWN;        
+  bool callbackValid = true;     
 
-  // Setup/reset req interrupt
-  if (USB->DEVICE.DeviceEndpoint[0].EPINTFLAG.bit.RXSTP
-  || USB->DEVICE.INTFLAG.bit.EORST) {                                
-    COM.usbp->ISRHandler();
-    COM.hostReset();        
-  
-  // Send complete interrupt
-  } else if (USB->DEVICE.DeviceEndpoint[COM_EP_OUT].EPINTFLAG.bit.TRCPT1) {
+  if (USB->DEVICE.INTFLAG.bit.RAMACER) {
+    USB->DEVICE.INTFLAG.bit.RAMACER = 1;
+    COM.currentError = ERROR_COM_SYS;
+    interruptReason = COM_REASON_RAM_ERROR;      
 
+  } else if (USB->DEVICE.EPINTSMRY.reg & (1 << COM_EP_OUT)) {
 
+    if (USB->DEVICE.DeviceEndpoint[COM_EP_OUT].EPINTFLAG.bit.TRCPT1) {
+      USB->DEVICE.DeviceEndpoint[COM_EP_OUT].EPSTATUSSET.bit.BK1RDY = 1; // Ready next transfer (BANK 1)
+      USB->DEVICE.DeviceEndpoint[COM_EP_OUT].EPINTFLAG.bit.TRCPT1 = 1;   // Clear transfer complete flag (BANK 1)
+      interruptReason = COM_REASON_SEND_COMPLETE;
 
-    USB->DEVICE.DeviceEndpoint[COM_EP_OUT].EPSTATUSSET.bit.BK1RDY = 1; // Ready next transfer  
-    USB->DEVICE.DeviceEndpoint[COM_EP_OUT].EPINTFLAG.bit.TRCPT1 = 1;   // Clear transfer complete flag
+    } else if (USB->DEVICE.DeviceEndpoint[COM_EP_OUT].EPINTFLAG.bit.TRFAIL1) {
+      USB->DEVICE.DeviceEndpoint[COM_EP_OUT].EPINTFLAG.bit.TRFAIL1 = 1;
+      COM.currentError = ERROR_COM_SEND;
+      interruptReason = COM_REASON_SEND_FAIL;
+    }
+
+  } else if (USB->DEVICE.EPINTSMRY.reg & (1 << COM_EP_IN)) {
+
+    if (USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTFLAG.bit.TRCPT0) {
+      USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTFLAG.bit.TRCPT0 = 1;
+      interruptReason = COM_REASON_RECEIVE_READY;
+
+    } else if (USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTFLAG.bit.TRFAIL0) {
+      USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTFLAG.bit.TRFAIL0 = 1;
+      COM.currentError = ERROR_COM_RECEIVE;
+      interruptReason = COM_REASON_RECEIVE_FAIL;
+    }
+
+  } else if (USB->DEVICE.INTFLAG.bit.SOF) {
+    USB->DEVICE.INTFLAG.bit.SOF = 1;
+    interruptReason = COM_REASON_SOF;
 
   } else {
-    COM.usbp->ISRHandler();
+    if (USB->DEVICE.DeviceEndpoint[0].EPINTFLAG.bit.RXSTP) {
+      interruptReason = COM_REASON_RESET;
+    }  
+    COM.usbp->ISRHandler(); // May need to call handler after this...
   }
 
+  // Call callback (if applicable)
+  if (COM.cbrMask & (1 << interruptReason) == 1) {
+    (*COM.callback)(interruptReason);
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -51,16 +80,15 @@ bool COM_::begin(USBDeviceClass *usbp) {
       return false;
     }
   }
-
-  //USB_SetHandler(&COMHandler);
-  //USB->DEVICE.DESCADD.bit.DESCADD = &epArray;
-
+  sendTO.setTimeout(COM_DEFAULT_TIMEOUT);
+  otherTO.setTimeout(COM_DEFAULT_TIMEOUT);
+  USB_SetHandler(&COMHandler);
 }
 
 bool COM_::send(void *source, uint8_t bytes, bool cacheData = true) {
-
-  // Has previous message finished sending?
   sendTO.start(false);
+  
+  // Has previous message finished sending?
   if (USB->DEVICE.DeviceEndpoint[COM_EP_OUT].EPSTATUS.bit.BK1RDY
   || !USB->DEVICE.DeviceEndpoint[COM_EP_OUT].EPINTFLAG.bit.TRCPT1) {
     sendTO++;
@@ -106,9 +134,10 @@ bool COM_::abortSend(bool blocking) {
     = endp[COM_EP_OUT]->DeviceDescBank->PCKSIZE.bit.BYTE_COUNT;
 
   if (blocking) {
-    Timeout TO(currentSendTO, true);
+    otherTO.start(true);
     while(!USB->DEVICE.DeviceEndpoint[1].EPINTFLAG.bit.TRCPT1) {
-      if(TO++ <= 0) break;
+      otherTO++;
+      if(otherTO) break;
     }
   }
   return true;
@@ -150,8 +179,10 @@ COM_::COM_() {
 }
 
 void COM_::resetFields() {
-
+ // TO DO
 }
+
+
 
 
 

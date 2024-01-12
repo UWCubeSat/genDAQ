@@ -39,7 +39,8 @@ enum ERROR_ID : uint8_t {
   ERROR_COM_TIMEOUT,
   ERROR_COM_REQ,
   ERROR_COM_SYS,
-  ERROR_COM_CACHE
+  ERROR_COM_SEND,
+  ERROR_COM_RECEIVE
 };
 
 enum ASSERT_ID : uint8_t {
@@ -240,8 +241,6 @@ enum IO_TYPE {
 #define I2C_IRQ_PRIORITY 1
 #define I2C_MAX_READ 64
 #define I2C_MAX_WRITE 32
-#define I2C_WRITE_TAG 0
-#define I2C_READ_TAG 1
 #define I2C_STOP_CMD 3
 #define I2C_BUS_IDLE_STATE 1
 #define I2C_MAX_TRANSFERSPEED 2
@@ -291,16 +290,22 @@ struct SERCOM_REF_OBJ {
 #define COM_SEND_MAX 1024
 #define COM_RECIEVE_MAX 1024
 #define COM_MAX_CACHE_SIZE 1024
+#define COM_DEFAULT_TIMEOUT 1000
 
 #define COM_EP_COUNT 4
 #define COM_EP_ACM 1
 #define COM_EP_IN 2
 #define COM_EP_OUT 3
+#define COM_EP_CTRL 0
 
 #define COM_REASON_UNKNOWN 0
-#define COM_REASON_SEND_COMPLETE 1
-#define COM_REASON_RECEIEVE_READY 2
-#define COM_REASON_SEND_FAIL 3
+#define COM_REASON_RECEIVE_READY 1
+#define COM_REASON_RECEIVE_FAIL 2
+#define COM_REASON_SEND_COMPLETE 3
+#define COM_REASON_SEND_FAIL 4
+#define COM_REASON_RESET 5
+#define COM_REASON_RAM_ERROR 6
+#define COM_REASON_SOF 7
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> MISC

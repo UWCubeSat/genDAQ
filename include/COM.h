@@ -31,6 +31,8 @@ class COM_ : public USBDeviceClass {
 
     bool busy();
 
+    bool stall();
+
     ERROR_ID getError();
 
     struct COMSettings {
@@ -48,21 +50,20 @@ class COM_ : public USBDeviceClass {
 
     void resetFields();
 
-    void ackEP(int16_t epNum);
-
-    void hostReset();
-
   private:
     friend COMSettings;
     friend void COMHandler(void);
     UsbDeviceDescriptor *endp[COM_EP_COUNT];
     USBDeviceClass *usbp;
 
-    ERROR_ID currentError;
+    volatile ERROR_ID currentError;
+    volatile bool stalled;
     Timeout sendTO;
+    Timeout otherTO;
     bool begun;
 
     COMCallback *callback;
+    uint16_t cbrMask;
 };
 
 extern COM_ &COM;
