@@ -2,41 +2,69 @@
 #pragma once
 #include<Arduino.h>
 #include <GlobalDefs.h>
+#include <GlobalTools.h>
 
-uint8_t outCache[COM_MAX_CACHE_SIZE] = { 0 };
+typedef void (*COMCallback)(uint8_t callbackReason);
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> COM CLASS
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Bank 1 is used for arduino write implementation...
 // Bank 0 is used for read implementation
-class COM : public USBDeviceClass {
+class COM_ : public USBDeviceClass {
   public:
 
-    void begin();
+    bool begin(USBDeviceClass *usbp);
 
-    int16_t send(void *source, uint8_t size);
+    bool send(void *source, uint8_t bytes, bool cacheData = true);
 
-    int16_t recieve(void *destination, uint8_t size);
+    int16_t bytesSent();
+
+    int16_t bytesRemaining();
+
+    bool abortSend(bool blocking);
+
+    bool recieve(void *destination, int16_t bytes);
+
+    int16_t available();
+
+    bool busy();
+
+    ERROR_ID getError();
 
     struct COMSettings {
 
       private:
         friend COM_;
-        COM *super;
-        explicit COMSettings(COM *super);
+        COM_ *super;
+        explicit COMSettings(COM_ *super) { this->super = super; }
 
     }settings{this};
 
+  protected:
+
+    COM_();
+
+    void resetFields();
+
+    void ackEP(int16_t epNum);
+
+    void hostReset();
+
   private:
     friend COMSettings;
-    USBDeviceClass &usbp = USBDevice;
+    friend void COMHandler(void);
+    UsbDeviceDescriptor *endp[COM_EP_COUNT];
+    USBDeviceClass *usbp;
+
     ERROR_ID currentError;
-    int16_t cacheIndex;
+    Timeout sendTO;
+    bool begun;
 
-    int32_t startSendTO;
-    int16_t currentSendTO;
-    int16_t timeout;
-
-    bool sendPartial;
-    int16_t maxCacheSize;
-
+    COMCallback *callback;
 };
-extern COM &COM;
+
+extern COM_ &COM;
+
+

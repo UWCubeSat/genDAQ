@@ -36,7 +36,10 @@ enum ERROR_ID : uint8_t {
   ERROR_DMA_CRC,
   ERROR_DMA_DESCRIPTOR,
 
-  ERROR_COM_TIMEOUT
+  ERROR_COM_TIMEOUT,
+  ERROR_COM_REQ,
+  ERROR_COM_SYS,
+  ERROR_COM_CACHE
 };
 
 enum ASSERT_ID : uint8_t {
@@ -278,16 +281,32 @@ struct SERCOM_REF_OBJ {
 };
 
 
+
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> COM CLASS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define COM_SEND_MAX 64
+#define COM_PACKET_SIZE 64
+#define COM_SEND_MAX 1024
+#define COM_RECIEVE_MAX 1024
 #define COM_MAX_CACHE_SIZE 1024
-#define COM_EP_OUT 3
+
+#define COM_EP_COUNT 4
+#define COM_EP_ACM 1
 #define COM_EP_IN 2
+#define COM_EP_OUT 3
 
+#define COM_REASON_UNKNOWN 0
+#define COM_REASON_SEND_COMPLETE 1
+#define COM_REASON_RECEIEVE_READY 2
+#define COM_REASON_SEND_FAIL 3
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> MISC
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+#define TO_DEFAULT_TIMEOUT 500
 
 
 
