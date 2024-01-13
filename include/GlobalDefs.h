@@ -287,10 +287,9 @@ struct SERCOM_REF_OBJ {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #define COM_PACKET_SIZE 64
-#define COM_SEND_MAX 1024
-#define COM_RECIEVE_MAX 1024
-#define COM_MAX_CACHE_SIZE 1024
-#define COM_DEFAULT_TIMEOUT 1000
+#define COM_SEND_MAX_PACKETS 16
+#define COM_RECIEVE_MAX_PACKETS 16
+#define COM_DEFAULT_TIMEOUT 500
 
 #define COM_EP_COUNT 4
 #define COM_EP_ACM 1

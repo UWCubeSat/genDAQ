@@ -15,25 +15,39 @@ typedef void (*COMCallback)(uint8_t callbackReason);
 class COM_ : public USBDeviceClass {
   public:
 
-    bool begin(USBDeviceClass *usbp);
+    bool begin(USBDeviceClass *usbp); // NEEDS WORK...
 
-    bool send(void *source, uint8_t bytes, bool cacheData = true);
+    bool end(); // TO DO
 
-    int16_t bytesSent();
+    bool restart(); // TO DO
 
-    int16_t bytesRemaining();
+    bool sendPackets(void *source, uint16_t numPackets); 
 
-    bool abortSend(bool blocking);
+    bool sendBusy();
 
-    bool recieve(void *destination, int16_t bytes);
+    int16_t packetsSent();
+
+    int16_t packetsRemaining();
+
+    bool abort();
+
+    int16_t recievePackets(void *destination, uint16_t numPackets); 
+
+    uint8_t *inspectPackets(uint16_t packetIndex); 
+
+    void flush(); 
 
     int16_t available();
 
-    bool busy();
+    int16_t recieved(); 
 
-    bool stall();
+    bool queueDestination(void *destination);
+
+    bool recievePending();
 
     ERROR_ID getError();
+
+    void clearError();
 
     struct COMSettings {
 
@@ -50,20 +64,30 @@ class COM_ : public USBDeviceClass {
 
     void resetFields();
 
+    void initEP();
+
+    void resetSize(int16_t endpoint);
+
   private:
     friend COMSettings;
     friend void COMHandler(void);
     UsbDeviceDescriptor *endp[COM_EP_COUNT];
     USBDeviceClass *usbp;
-
-    volatile ERROR_ID currentError;
-    volatile bool stalled;
     Timeout sendTO;
     Timeout otherTO;
-    bool begun;
 
+    uint8_t RX[COM_SEND_MAX_PACKETS];
+    volatile int16_t RXi;
+    volatile uint32_t customDest;
+    volatile uint32_t queueDest;
+
+    volatile ERROR_ID currentError;
+    bool begun;
+    
     COMCallback *callback;
+    bool enforceNumPackets;
     uint16_t cbrMask;
+    int16_t rxPacketCount;
 };
 
 extern COM_ &COM;
