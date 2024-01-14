@@ -17,10 +17,10 @@
 })
 
 // Works with signed or unsigned numbers
-#define SDIV_CEIL(x, y) x / y + !(((x < 0) != (y < 0)) || !(x % y));
+#define SDIV_CEIL(x, y) (x / y + !(((x < 0) != (y < 0)) || !(x % y)))
 
 // Works with ONLY POSITIVE numbers
-#define UDIV_CEIL(x, y) x / y + !!(x % y);
+#define UDIV_CEIL(x, y) (x / y + !!(x % y))
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> ERROR SYSTEM
@@ -40,7 +40,8 @@ enum ERROR_ID : uint8_t {
   ERROR_COM_REQ,
   ERROR_COM_SYS,
   ERROR_COM_SEND,
-  ERROR_COM_RECEIVE
+  ERROR_COM_RECEIVE,
+  ERROR_COM_MEM
 };
 
 enum ASSERT_ID : uint8_t {
@@ -246,6 +247,9 @@ enum IO_TYPE {
 #define I2C_MAX_TRANSFERSPEED 2
 #define I2C_MAX_SDAHOLDTIME 3
 
+#define I2C_WRITE_TAG 200
+#define I2C_READ_TAG 201
+
 //// I2C SETTINGS ////
 #define I2C_DEFAULT_BAUDRATE 100000
 #define I2C_MAX_BAUDRATE 3400000
@@ -288,8 +292,10 @@ struct SERCOM_REF_OBJ {
 
 #define COM_PACKET_SIZE 64
 #define COM_SEND_MAX_PACKETS 16
-#define COM_RECIEVE_MAX_PACKETS 16
-#define COM_DEFAULT_TIMEOUT 500
+#define COM_RX_SIZE 512
+#define COM_RX_PACKETS 8
+#define COM_DEFAULT_REQ 1
+#define COM_DEFAULT_RECIEVE 1
 
 #define COM_EP_COUNT 4
 #define COM_EP_ACM 1
@@ -303,8 +309,27 @@ struct SERCOM_REF_OBJ {
 #define COM_REASON_SEND_COMPLETE 3
 #define COM_REASON_SEND_FAIL 4
 #define COM_REASON_RESET 5
-#define COM_REASON_RAM_ERROR 6
-#define COM_REASON_SOF 7
+#define COM_REASON_SOF 6
+
+#define COM_MAX_SQ 3
+
+#define COM_DEFAULT_RECEIVE_READY 1
+#define COM_DEFAULT_RECEIVE_FAIL 1
+#define COM_DEFAULT_SEND_COMPLETE 1
+#define COM_DEFAULT_SEND_FAIL 1
+#define COM_DEFAULT_RESET 0
+#define COM_DEFAULT_SOF 0
+#define COM_DEFAULT_SQ 0
+#define COM_DEFAULT_TIMEOUT 500
+#define COM_DEFAULT_ENFORCE_NUM 0
+#define COM_DEFAULT_CALLBACK nullptr
+#define COM_DEFAULT_CBRMASK (                                \
+    (COM_DEFAULT_RECEIVE_READY << COM_REASON_RECEIVE_READY)  \
+  | (COM_DEFAULT_RECEIVE_FAIL << COM_REASON_RECEIVE_FAIL)    \
+  | (COM_DEFAULT_SEND_COMPLETE << COM_REASON_SEND_COMPLETE)  \
+  | (COM_DEFAULT_SEND_FAIL << COM_REASON_SEND_FAIL)          \
+  | (COM_DEFAULT_RESET << COM_REASON_RESET)                  \
+  | (COM_DEFAULT_SOF << COM_REASON_SOF))
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> MISC

@@ -15,11 +15,9 @@ typedef void (*COMCallback)(uint8_t callbackReason);
 class COM_ : public USBDeviceClass {
   public:
 
-    bool begin(USBDeviceClass *usbp); // NEEDS WORK...
+    bool begin(USBDeviceClass *usbp); 
 
-    bool end(); // TO DO
-
-    bool restart(); // TO DO
+    bool end(); 
 
     bool sendPackets(void *source, uint16_t numPackets); 
 
@@ -29,27 +27,46 @@ class COM_ : public USBDeviceClass {
 
     int16_t packetsRemaining();
 
-    bool abort();
+    bool abortSend();
 
-    int16_t recievePackets(void *destination, uint16_t numPackets); 
+    int16_t recievePackets(void *destination, uint16_t numPackets, bool forceRecieve); 
 
-    uint8_t *inspectPackets(uint16_t packetIndex); 
+    uint8_t *inspectPacket(uint16_t packetIndex); 
 
-    void flush(); 
+    bool request(void *customDest, uint16_t packetNum, bool forceReq);
 
-    int16_t available();
+    bool flush(int16_t numPackets);
 
-    int16_t recieved(); 
+    int16_t available(bool packets);
 
-    bool queueDestination(void *destination);
+    int16_t packetsRecieved(); 
 
-    bool recievePending();
+    bool requestPending();
+
+    void cancelRequest(); 
+
+    int16_t getPeripheralState();
+
+    int32_t getFrameCount(bool getMicroFrameCount);
 
     ERROR_ID getError();
 
     void clearError();
 
     struct COMSettings {
+
+      COMSettings &setServiceQuality(int16_t serviceQualityLevel);
+
+      COMSettings &setCallbackConfig(bool enableRecvRdy, bool enableRecvFail, 
+        bool enableSendCompl, bool enableSendFail, bool enableRst, bool enableSOF);
+
+      COMSettings &setCallback(COMCallback *callback);
+
+      COMSettings &setTimeout(uint32_t timeout);
+
+      COMSettings &setEnforceNumPacketConfig(bool enforceNumPackets);
+
+      void setDefault();
 
       private:
         friend COM_;
@@ -69,6 +86,7 @@ class COM_ : public USBDeviceClass {
     void resetSize(int16_t endpoint);
 
   private:
+    //// Fields ////
     friend COMSettings;
     friend void COMHandler(void);
     UsbDeviceDescriptor *endp[COM_EP_COUNT];
@@ -76,18 +94,20 @@ class COM_ : public USBDeviceClass {
     Timeout sendTO;
     Timeout otherTO;
 
-    uint8_t RX[COM_SEND_MAX_PACKETS];
-    volatile int16_t RXi;
-    volatile uint32_t customDest;
-    volatile uint32_t queueDest;
-
+    //// Variables ////
+    uint8_t RX[COM_RX_SIZE];
+    volatile int16_t RXi; // Packet index
+    volatile int16_t rxiLast;
+    volatile bool rxiActive;
     volatile ERROR_ID currentError;
     bool begun;
     
+    //// Settings ////
     COMCallback *callback;
     bool enforceNumPackets;
-    uint16_t cbrMask;
-    int16_t rxPacketCount;
+    uint8_t cbrMask;
+    uint32_t STOtime;
+    uint32_t OTOtime;
 };
 
 extern COM_ &COM;

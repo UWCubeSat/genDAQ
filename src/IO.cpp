@@ -570,7 +570,7 @@ void SPISerial::init() {
 
 
 SPISerial::SPISettings &SPISerial::SPISettings::setClockPhaseConfig(int16_t clockPhaseConfig) {
-
+  return *this;
 }
 
 
@@ -580,7 +580,7 @@ SPISerial::SPISettings &SPISerial::SPISettings::changeCTRLA(uint32_t resetMask, 
     while(super->s->SPI.SYNCBUSY.bit.ENABLE);
     super->s->SPI.CTRLA.reg &= ~resetMask;
   }
-
+  return *this;
 }
 
 

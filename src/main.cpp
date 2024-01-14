@@ -5,13 +5,12 @@ void setup() {
   Serial.begin(0);
   while(!Serial);
 
-  USBDeviceClass &usbp = USBDevice;
-  uint8_t data = 54;
+  Serial.println("test");
 
-
-
-
-
+  
+  
+  
+  Serial.println("test2");
 /*
   USB->DEVICE.DeviceEndpoint[3].EPSTATUSSET.bit.BK1RDY = 1;
   usbp.armSend(CDC_ENDPOINT_IN, &data, 1);

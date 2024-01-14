@@ -8,21 +8,20 @@ COM_ &COM;
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 void COMHandler(void) {   
-  uint8_t interruptReason = COM_REASON_UNKNOWN;        
-  bool callbackValid = true;     
+  // If ended -> call default handler
+  if (!COM.begun) COM.usbp->ISRHandler();
 
-  // Ram access error
-  if (USB->DEVICE.INTFLAG.bit.RAMACER) {
-    USB->DEVICE.INTFLAG.bit.RAMACER = 1;
-    COM.currentError = ERROR_COM_SYS;
-    interruptReason = COM_REASON_RAM_ERROR;      
+  uint8_t interruptReason = COM_REASON_UNKNOWN;        
+  bool callbackValid = true;
+  bool readyRecv = false;  
+  bool readySend = false;   
 
   // Interrupt on out endpoint
-  } else if (USB->DEVICE.EPINTSMRY.reg & (1 << COM_EP_OUT)) {
+  if (USB->DEVICE.EPINTSMRY.reg & (1 << COM_EP_OUT)) {
+    readySend = true;
 
     // Transfer complete flag
     if (USB->DEVICE.DeviceEndpoint[COM_EP_OUT].EPINTFLAG.bit.TRCPT1) {
-      USB->DEVICE.DeviceEndpoint[COM_EP_OUT].EPSTATUSCLR.bit.BK1RDY = 1; // Clear ready status   
       interruptReason = COM_REASON_SEND_COMPLETE;
 
     // Transfer fail flag
@@ -30,10 +29,16 @@ void COMHandler(void) {
       USB->DEVICE.DeviceEndpoint[COM_EP_OUT].EPINTFLAG.bit.TRFAIL1 = 1;
       COM.currentError = ERROR_COM_SEND;
       interruptReason = COM_REASON_SEND_FAIL;
-    }
 
+      // Is transfer fail due to ram access error?
+      if (USB->DEVICE.INTFLAG.bit.RAMACER) {
+        USB->DEVICE.INTFLAG.bit.RAMACER = 1; 
+        COM.currentError = ERROR_COM_MEM;  
+      }
+    }
   // Interrupt on in endpoint
   } else if (USB->DEVICE.EPINTSMRY.reg & (1 << COM_EP_IN)) {
+    readyRecv = true;
 
     // Transfer recieved flag -> shift recieve addr & req next packet
     if (USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTFLAG.bit.TRCPT0) {
@@ -44,21 +49,19 @@ void COMHandler(void) {
       USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTFLAG.bit.TRFAIL0 = 1;
       COM.currentError = ERROR_COM_RECEIVE;
       interruptReason = COM_REASON_RECEIVE_FAIL;
-
-      // Flush bad data
-      COM.resetSize(COM_EP_IN);
-      COM.flush();
+  
+      // Transfer fail due to buffer overflow?
+      if (COM.endp[COM_EP_IN]->DeviceDescBank->STATUS_BK.bit.ERRORFLOW == 1) { // MAYBE ADD A COM.FLUSH(0) HERE????
+        COM.currentError = ERROR_COM_MEM;
+      }
     }
 
-    // Clear queued destination
-    if (COM.queueDest != 0) {
-      COM.queueDest = 0;
-
-    // If NOT custom destination -> update internal buffer index
-    } else if (COM.customDest == 0) {
-      COM.RXi = COM.endp[COM_EP_IN]->DeviceDescBank->
-        PCKSIZE.bit.BYTE_COUNT / COM_PACKET_SIZE; 
+    if (COM.rxiActive) {
+      uint16_t num = UDIV_CEIL(COM.endp[COM_EP_IN]->DeviceDescBank->
+        PCKSIZE.bit.BYTE_COUNT, COM_PACKET_SIZE); 
+      COM.RXi = (COM.RXi + num <= COM_RX_PACKETS * COM_PACKET_SIZE) ? num : COM.RXi;
     }
+    COM.rxiActive = true;
 
   // Start of frame flag (every roughly ~1ms)
   } else if (USB->DEVICE.INTFLAG.bit.SOF) {
@@ -67,19 +70,24 @@ void COMHandler(void) {
 
   // Reset req flag
   } else {
-    if (USB->DEVICE.DeviceEndpoint[0].EPINTFLAG.bit.RXSTP) {
+    if (USB->DEVICE.DeviceEndpoint[COM_EP_CTRL].EPINTFLAG.bit.RXSTP) {
       interruptReason = COM_REASON_RESET;
       COM.usbp->ISRHandler();
       COM.initEP();
-
-    // Unknown interrupt
     } else {
-      COM.usbp->ISRHandler();
+      COM.usbp->ISRHandler(); // Else -> Unknown interrupt
     }  
   }
-
-  if (COM.cbrMask & (1 << interruptReason) == 1) {
+  if ((COM.cbrMask & (1 << interruptReason)) == 1) {
     (*COM.callback)(interruptReason);
+  }
+  // Ready send/recieve after callback
+  if (readyRecv) {
+    USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPSTATUSSET.bit.BK0RDY = 1; // Set ready status
+    USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTENCLR.bit.TRCPT0 = 1;  // Disable recieve complete interrupt
+  }
+  if (readySend) {
+    USB->DEVICE.DeviceEndpoint[COM_EP_OUT].EPSTATUSCLR.bit.BK1RDY = 1; // Clear ready status   
   }
 }
 
@@ -90,10 +98,14 @@ void COMHandler(void) {
 bool COM_::begin(USBDeviceClass *usbp) {
 
   // Check exceptions
-  if (!SERIAL_PORT_MONITOR) return false;
+  if (begun) return true;
+  if (usbp == nullptr) return false;
+  if (!usbp->configured()) return false;
 
   resetFields();
+  settings.setDefault();
   this->usbp = usbp;
+  begun = true;
   
   // Get endpoint descriptors
   for (int16_t i = 0; i < COM_EP_COUNT; i++) {
@@ -105,20 +117,32 @@ bool COM_::begin(USBDeviceClass *usbp) {
       return false;
     }
   }
-  sendTO.setTimeout(COM_DEFAULT_TIMEOUT);
-  otherTO.setTimeout(COM_DEFAULT_TIMEOUT);
   USB_SetHandler(&COMHandler);
+  return true;
+}
+
+bool COM_::end() {
+  if (!begun) return true;
+  begun = false;
+  
+  USB->DEVICE.CTRLA.bit.ENABLE = 0;
+  while(USB->DEVICE.SYNCBUSY.bit.ENABLE);
+  resetFields();
+  usbp->init();
+  usbp->attach();
+  return true;
 }
 
 bool COM_::sendPackets(void *source, uint16_t numPackets) {
-
+  if (!begun) return false;
+  
   sendTO.start(false);
   if (numPackets <= 0) return false;
   
   // If sendBusy & timeout -> send ZLP
   if (sendBusy()) {
     if (sendTO++ == 0) {
-      usbp->sendZlp(COM_EP_OUT);
+      endp[COM_EP_OUT]->DeviceDescBank->PCKSIZE.bit.BYTE_COUNT = 0;
       currentError = ERROR_COM_TIMEOUT;
       abort();
     }
@@ -150,107 +174,199 @@ bool COM_::sendPackets(void *source, uint16_t numPackets) {
 }
 
 bool COM_::sendBusy() {
+  if (!begun) return false;
   if (!USB->DEVICE.DeviceEndpoint[COM_EP_OUT].EPINTFLAG.bit.TRCPT1
   || USB->DEVICE.DeviceEndpoint[COM_EP_OUT].EPSTATUS.bit.BK1RDY) {
     return true;
   }
+  return false;
 }
 
 int16_t COM_::packetsSent() {
+  if (!begun) return -1;
   return endp[COM_EP_OUT]->DeviceDescBank->
     PCKSIZE.bit.MULTI_PACKET_SIZE / COM_PACKET_SIZE;
 }
 
 int16_t COM_::packetsRemaining() {
+  if (!begun) return -1;
   return endp[COM_EP_OUT]->DeviceDescBank->
     PCKSIZE.bit.BYTE_COUNT / COM_PACKET_SIZE - packetsSent();
 }
 
-bool COM_::abort() {
+bool COM_::abortSend() {
   if (!sendBusy()) return true;
   int16_t transferSize = endp[COM_EP_OUT]->DeviceDescBank->PCKSIZE.bit.BYTE_COUNT; // Get send total bytes
   endp[COM_EP_OUT]->DeviceDescBank->PCKSIZE.bit.MULTI_PACKET_SIZE = transferSize;  // Set total bytes = sent bytes
   return true;
 } 
 
-int16_t COM_::recievePackets(void *destination, uint16_t reqPackets) {
+int16_t COM_::recievePackets(void *destination, uint16_t numPackets, bool forceRecieve) {
+  if (!begun) return -1;
 
-  // Handle exceptions
   if (destination == nullptr) return -1;
-  if (USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTFLAG.bit.TRCPT0 == 0) return 0;
+  if (USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTFLAG.bit.TRCPT0 == 0 
+    && !forceRecieve) return 0;
 
-  if (available()) {
-    if (reqPackets > available()) {
-      if (enforceNumPackets) return false;
-      else reqPackets = available();
+  if (available(true)) {
+    if (numPackets > available(true)) {
+      if (enforceNumPackets) return 0;
+      numPackets = available(true);
+
+    } else if (numPackets == 0) {
+      numPackets = COM_DEFAULT_RECIEVE;
     }
-    // Disable transfer complete interrupt
-    USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTENCLR.bit.TRCPT0 = 1;
-
     // Transfer requested bytes from RX
-    uint16_t reqBytes = reqPackets * COM_PACKET_SIZE;
-    memcpy(&destination, &RX[RXi - reqBytes], reqBytes);
+    uint16_t reqBytes = numPackets * COM_PACKET_SIZE;
+    memcpy(&destination, RX + (RXi - reqBytes), reqBytes);
     RXi -= reqBytes;
   }
 
   if (RXi <= 0) {
-    RXi = 0;
     resetSize(COM_EP_IN);
-
-    uint32_t dest = (uint32_t)&RX; 
-    if (queueDest != 0) dest = queueDest;
-    else if (customDest) dest = customDest;
-
-    // Set destination
-    endp[COM_EP_IN]->DeviceDescBank->ADDR.bit.ADDR = dest;
-
-    // Set packet count & set "ready" status
-    endp[COM_EP_IN]->DeviceDescBank->PCKSIZE.bit.MULTI_PACKET_SIZE = rxPacketCount;
-    USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPSTATUSCLR.bit.BK0RDY = 1;
-
-    // Re-enable transfer complete interrupt & clear flag
-    USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTFLAG.bit.TRCPT0 = 1;   
-    USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTENSET.bit.TRCPT0 = 1;
+    RXi = 0;
   }
   return true;
 }
 
-uint8_t *COM_::inspectPackets(uint16_t packetIndex) {
-  CLAMP(packetIndex, 0, available());
-  if (packetIndex == 0) return nullptr;
-  return &RX[packetIndex];
-}
+bool COM_::request(void *customDest, uint16_t numPackets, bool forceReq) {
+  if (!begun) return false;
 
-void COM_::flush() {
-  endp[COM_EP_IN]->DeviceDescBank->PCKSIZE.bit.BYTE_COUNT = 0;
-  memset(&RX, 0, endp[COM_EP_OUT]->DeviceDescBank->PCKSIZE.bit.MULTI_PACKET_SIZE);
-  RXi = 0;
-}
-
-int16_t COM_::available() { 
-  return UDIV_CEIL(RXi , COM_PACKET_SIZE); 
-}
-
-int16_t COM_::recieved() { 
-  return endp[COM_EP_IN]->DeviceDescBank->PCKSIZE.bit.BYTE_COUNT / COM_PACKET_SIZE;
-}
-
-bool COM_::queueDestination(void *destination) {
-  if (recievePending()) return false;
-  if (destination == nullptr) return false;
-  queueDest = (uint32_t)destination;
-  return true;
-}
-
-bool COM_::recievePending() {
-  if (USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTFLAG.bit.TRCPT0 == 0) {
+  // Handle exceptions
+  if (RXi > COM_RX_PACKETS - 1) {
+    currentError = ERROR_COM_REQ;
     return false;
-  } else {
-    return true;
   }
+  if (requestPending()) {
+    if (forceReq) cancelRequest();
+    else return false;
+  }
+
+  // Determine packet count for recieve
+  uint16_t bytes = (!numPackets ? COM_DEFAULT_REQ : numPackets) * COM_PACKET_SIZE;
+
+  if (customDest == nullptr && numPackets != 0 
+  && RXi + numPackets > COM_RX_PACKETS) {
+    if (enforceNumPackets) return false;
+    bytes = (COM_RX_PACKETS - RXi) * COM_PACKET_SIZE; 
+  }
+
+  resetSize(COM_EP_IN); // Must reset sizes to initiate enable recieve
+
+  endp[COM_EP_IN]->DeviceDescBank->ADDR.bit.ADDR 
+    = (customDest == nullptr) ? (uint32_t)RX + bytes : (uint32_t)customDest; // Set destination
+  endp[COM_EP_IN]->DeviceDescBank->PCKSIZE.bit.MULTI_PACKET_SIZE = bytes;    // Set packet count
+      
+  // Enable recieve
+  USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPSTATUSCLR.bit.BK0RDY = 1; // Clear ready status
+  USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTFLAG.bit.TRCPT0 = 1;   // Clear recieved flag
+  USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTENSET.bit.TRCPT0 = 1;  // Enable transfer complete interrupt
+
+  rxiLast = RXi;
+  return true;
 }
 
-ERROR_ID COM_::getError() { return currentError; }
+bool COM_::flush(int16_t numPackets) {
+  if (!begun) return false;
+
+  CLAMP(numPackets, -available(true), available(true));
+  uint16_t reqBytes = abs(numPackets) * COM_PACKET_SIZE;
+  uint16_t absBytes = available(false);
+
+  if (abs(numPackets) == available(true)) { // Clear entire RX buffer
+      memset(RX, 0, sizeof(RX));
+      RXi = 0;
+
+  } else if (numPackets == 0) { // Clear most packets in RX buffer that wer last recieved
+    if (rxiLast != RXi) { 
+      memset(RX + rxiLast, 0, (COM_RX_PACKETS - rxiLast) * COM_PACKET_SIZE);
+    } else {
+      memset(RX + RXi, 0, (COM_RX_PACKETS - RXi) * COM_PACKET_SIZE);
+    }
+    RXi = rxiLast;
+
+  } else { // Else -> removing packets from top or bottom of RX buffer
+    if (numPackets < 0) {
+      memmove(RX + reqBytes, RX, absBytes - reqBytes);
+    }
+    memset(RX + (absBytes - reqBytes), 0, reqBytes);
+    RXi -= abs(numPackets);
+  } 
+  return true;
+}
+
+int16_t COM_::packetsRecieved() { 
+  if (!begun) return -1;
+  uint16_t n = UDIV_CEIL(endp[COM_EP_IN]->DeviceDescBank->PCKSIZE.bit.BYTE_COUNT,
+    COM_PACKET_SIZE);
+  return (requestPending() ? n : 0);
+}
+
+void COM_::cancelRequest() {
+  if (!begun) return;
+  // Dissable interrupts
+  USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTENCLR.bit.TRCPT0 = 1;
+  USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTENCLR.bit.TRFAIL0 = 1;
+
+  // Record current count & reset it.
+  uint16_t count = endp[COM_EP_IN]->DeviceDescBank->PCKSIZE.bit.BYTE_COUNT;
+  endp[COM_EP_IN]->DeviceDescBank->PCKSIZE.bit.MULTI_PACKET_SIZE = count;
+
+  // Set ready status -> stops transfer
+  USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPSTATUSSET.bit.BK0RDY = 1; 
+
+  // Set recieve buffer (RX) index
+  RXi += count;
+  if (RXi >= COM_RX_PACKETS) {
+    RXi = COM_RX_PACKETS - 1;
+    currentError = ERROR_COM_RECEIVE;
+  }
+  // Re-enable interrupts
+  USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTENCLR.bit.TRCPT0 = 1;
+  USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTENCLR.bit.TRFAIL0 = 1;
+  rxiActive = true;
+}
+
+bool COM_::requestPending() {
+  if (!begun) return false;
+  return (USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPINTFLAG.bit.TRCPT0 == 0
+  || USB->DEVICE.DeviceEndpoint[COM_EP_IN].EPSTATUS.bit.BK0RDY == 0);
+}
+
+int32_t COM_::getFrameCount(bool getMicroFrameCount) { 
+  if (!begun) return 0;
+  return (getMicroFrameCount ? USB->DEVICE.FNUM.bit.MFNUM : USB->DEVICE.FNUM.bit.FNUM); 
+}
+
+int16_t COM_::available(bool packets) {
+  if (!begun) return -1;
+  uint16_t bytes = RXi * COM_PACKET_SIZE;
+  if (requestPending()) {
+    bytes += endp[COM_EP_IN]->DeviceDescBank->PCKSIZE.bit.BYTE_COUNT;
+  }
+  return (packets ? UDIV_CEIL(bytes, COM_PACKET_SIZE) : bytes);
+}
+
+int16_t COM_::getPeripheralState() { 
+  if (!begun) return -1;
+  return USB->DEVICE.FSMSTATUS.bit.FSMSTATE; 
+}
+
+uint8_t *COM_::inspectPacket(uint16_t packetIndex) {
+  if (!begun) return nullptr; 
+  CLAMP(packetIndex, 0, RXi - 1);
+  return &RX[(RXi - 1) - packetIndex]; 
+}
+
+ERROR_ID COM_::getError() { 
+  if (!begun) return ERROR_UNKNOWN;
+  return currentError; 
+}
+
+void COM_::clearError() { 
+  if (!begun) return;
+  currentError = ERROR_NONE; 
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> COM PRIVATE METHODS
@@ -259,10 +375,18 @@ ERROR_ID COM_::getError() { return currentError; }
 COM_::COM_() : sendTO(COM_DEFAULT_TIMEOUT, false), otherTO(COM_DEFAULT_TIMEOUT, false) {
   usbp = &USBDevice;
   resetFields();
+  settings.setDefault();
 }
 
 void COM_::resetFields() {
- // TO DO
+  memset(RX, 0, sizeof(RX));
+  sendTO.setTimeout(COM_DEFAULT_TIMEOUT);
+  otherTO.setTimeout(COM_DEFAULT_TIMEOUT);
+  RXi = 0;
+  rxiLast = 0;
+  rxiActive = true;
+  currentError = ERROR_NONE;
+  begun = false;
 }
 
 void COM_::resetSize(int16_t endpoint) {
@@ -270,7 +394,61 @@ void COM_::resetSize(int16_t endpoint) {
   endp[endpoint]->DeviceDescBank->PCKSIZE.bit.MULTI_PACKET_SIZE = 0;
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> COM SETTINGS
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
+COM_::COMSettings &COM_::COMSettings::setServiceQuality(int16_t serviceQualityLevel) {
+  CLAMP(serviceQualityLevel, 0, COM_MAX_SQ);
+  USB->DEVICE.QOSCTRL.bit.DQOS = serviceQualityLevel;
+  return *this;
+}
+
+COM_::COMSettings &COM_::COMSettings::setCallbackConfig(bool enableRecvRdy, bool enableRecvFail, 
+  bool enableSendCompl, bool enableSendFail, bool enableRst, bool enableSOF) {
+  uint8_t msk = super->cbrMask;
+  msk = 0;
+
+  if (enableRecvRdy) 
+    msk |= (1 << COM_REASON_RECEIVE_READY);
+  if (enableRecvFail) 
+    msk |= (1 << COM_REASON_RECEIVE_FAIL);
+  if (enableSendCompl) 
+    msk |= (1 << COM_REASON_SEND_COMPLETE);
+  if (enableSendFail) 
+    msk |= (1 << COM_REASON_SEND_FAIL);
+  if (enableRst) 
+    msk |= (1 << COM_REASON_RESET);
+  if (enableSOF) 
+    msk |= (1 << COM_REASON_SOF);
+  return *this;
+}
+
+COM_::COMSettings &COM_::COMSettings::setCallback(COMCallback *callback) {
+  super->callback = callback;
+  return *this;
+}
+
+COM_::COMSettings &COM_::COMSettings::setTimeout(uint32_t timeout) {
+  super->STOtime = timeout;
+  super->OTOtime = timeout;
+  return *this;
+}
+
+COM_::COMSettings &COM_::COMSettings::setEnforceNumPacketConfig(bool enforceNumPackets) {
+  super->enforceNumPackets = enforceNumPackets;
+  return *this;
+}
+
+void COM_::COMSettings::setDefault() {
+  USB->DEVICE.QOSCTRL.bit.DQOS = COM_DEFAULT_SQ;
+  super->cbrMask = 0;
+  super->cbrMask |= COM_DEFAULT_CBRMASK;
+  super->callback = COM_DEFAULT_CALLBACK;
+  super->STOtime = COM_DEFAULT_TIMEOUT;
+  super->OTOtime = COM_DEFAULT_TIMEOUT;
+  super->enforceNumPackets = COM_DEFAULT_ENFORCE_NUM;
+}
 
 
 

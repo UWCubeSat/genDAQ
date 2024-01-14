@@ -377,7 +377,7 @@ TransferDescriptor &TransferDescriptor::setIncrementModifier(DMA_TARGET target, 
     currentDesc->BTCTRL.bit.STEPSIZE = DMA_DEFAULT_STEPSIZE;
     currentDesc->BTCTRL.bit.STEPSEL = DMA_DEFAULT_STEPSELECTION;
   } else {
-    if (target = SOURCE) {
+    if (target == SOURCE) {
       currentDesc->BTCTRL.bit.STEPSEL = DMAC_BTCTRL_STEPSEL_SRC_Val;
     } else {
       currentDesc->BTCTRL.bit.STEPSEL = DMAC_BTCTRL_STEPSEL_DST_Val;
@@ -391,6 +391,7 @@ TransferDescriptor &TransferDescriptor::setIncrementModifier(DMA_TARGET target, 
 
 TransferDescriptor &TransferDescriptor::setAction(DMA_TRANSFER_ACTION action) {
   currentDesc->BTCTRL.bit.BLOCKACT = (uint8_t)action;
+  return *this;
 }
 
 bool TransferDescriptor::isValid() {
@@ -807,7 +808,7 @@ bool TransferChannel::removeDescriptor(int16_t descriptorIndex, bool updateWrite
   } else {
 
     // Get prev, targ & next if removing descriptor @ end of list.
-    if (descriptorIndex = descriptorCount - 1) {
+    if (descriptorIndex == descriptorCount - 1) {
       previousDescriptor = getDescriptor(descriptorCount - 2);
       targetDescriptor = (DmacDescriptor*)previousDescriptor->DESCADDR.bit.DESCADDR;
       removedAddr = (uint32_t)targetDescriptor;
@@ -961,12 +962,14 @@ bool TransferChannel::enableExternalTrigger() {
   if (externalTrigger == TRIGGER_SOFTWARE) return false;
   DMAC->Channel[channelIndex].CHCTRLA.bit.TRIGSRC = (uint8_t)externalTrigger;
   externalTriggerEnabled = true;
+  return true;
 }
 
 bool TransferChannel::disableExternalTrigger() {
   if (!externalTriggerEnabled || externalTrigger == TRIGGER_SOFTWARE) return false;
   DMAC->Channel[channelIndex].CHCTRLA.bit.TRIGSRC = (uint8_t)TRIGGER_SOFTWARE;
   externalTriggerEnabled = false;
+  return true;
 }
 
 
@@ -1369,6 +1372,7 @@ bool ChecksumGen::start(int16_t checksumLength) {
   // If descriptors valid -> trigger transfer
   if (writeDesc.isValid() && readDesc.isValid()) {
     channel->trigger();
+    return true;
   } else {
     return false;
   }
