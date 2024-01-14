@@ -23,8 +23,29 @@
 #define UDIV_CEIL(x, y) (x / y + !!(x % y))
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> PROGRAM (GENERAL)
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+#define DEBUG_MODE true
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> ERROR SYSTEM
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+
+#define ERRSYS_ASSERTS_ENABLED true
+#define ERRSYS_ASSERT_RESET_ENABLED true
+#define ERRSYS_ASSERT_LED_ENABLED true
+#define ERRSYS_ASSERT_LED_PULSES 50
+#define ERRSYS_ASSERT_LED_DELAY_MS 50
+#define ERRSYS_ASSERT_LED_PRIMARY 7
+#define ERRSYS_ASSERT_LED_SECONDARY 13
+
+#define ERRSYS_ERROR_LED_ENABLED true
+#define ERRSYS_ERROR_LED_DELAY_MS 100
+#define ERRSYS_ERROR_LED 7
+
+#define ERRSYS_SERIAL_TIMEOUT 1000
+#define ERRSYS_MAX_ERRORS 30
 
 enum ERROR_ID : uint8_t {
   ERROR_NONE,
@@ -41,12 +62,9 @@ enum ERROR_ID : uint8_t {
   ERROR_COM_SYS,
   ERROR_COM_SEND,
   ERROR_COM_RECEIVE,
-  ERROR_COM_MEM
-};
+  ERROR_COM_MEM,
 
-enum ASSERT_ID : uint8_t {
-  ASSSERT_OTHER,
-  ASSERT_NULLPTR
+  ERROR_ADC_SYS
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -267,6 +285,17 @@ enum I2C_STATUS : uint8_t {
   I2C_WRITE_BUSY,
   I2C_READ_BUSY,
   I2C_ERROR
+};
+
+/////////////////////////////////////////// ANALOG PIN ////////////////////////////////////////////
+
+#define ADC_MAX_PINS 12
+#define ADC_IRQ_COUNT 2
+#define ADC_DEFAULT_MODULE ADC0
+
+enum ADC_MODULE : uint8_t {
+  ADC_MODULE0,
+  ADC_MODULE1
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////

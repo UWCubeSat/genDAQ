@@ -32,7 +32,7 @@ inline int16_t GET_SERCOM_NUM(Sercom *s) {
   }
 }
 
-extern const SERCOM_REF_OBJ SERCOM_REF[] = {
+const SERCOM_REF_OBJ SERCOM_REF[] = {
   {SERCOM0_DMAC_ID_RX, SERCOM0_DMAC_ID_TX, SERCOM0_GCLK_ID_CORE, SERCOM0_0_IRQn},
   {SERCOM1_DMAC_ID_RX, SERCOM1_DMAC_ID_TX, SERCOM1_GCLK_ID_CORE, SERCOM1_0_IRQn},
   {SERCOM2_DMAC_ID_RX, SERCOM2_DMAC_ID_TX, SERCOM2_GCLK_ID_CORE, SERCOM2_0_IRQn},
@@ -41,23 +41,27 @@ extern const SERCOM_REF_OBJ SERCOM_REF[] = {
   {SERCOM5_DMAC_ID_RX, SERCOM5_DMAC_ID_TX, SERCOM5_GCLK_ID_CORE, SERCOM5_0_IRQn} 
 };
 
+Adc *ADC_MODULES[] = {ADC0, ADC1};
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> SERCOM_INTERRUPT_HANDLERS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
+//// NEEDS TO BE DONE!!!
+/*
 void SercomIRQHandler() {
 
 }
-
+*/
 
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-///// SECTION -> PERIPHERAL BASE CLASS
+///// SECTION -> SERIAL BUS (BASE CLASS)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-int16_t IO::getIOID() { return IOID; }
+int16_t SerialBus::getIOID() { return IOID; }
 
-IO_TYPE IO::getType() { return baseType; }
+IO_TYPE SerialBus::getType() { return baseType; }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> I2C DMA INTERRUPT CALLBACK
@@ -69,7 +73,7 @@ void I2CdmaCallback(DMA_CALLBACK_REASON reason, TransferChannel &channel,
   int16_t triggerType, int16_t descIndex, ERROR_ID error) {
   /*
   // Get I2C bus obj associated with callback & reset busy DMA (opp) flag
-  I2CSerial *source = static_cast<I2CSerial*>(IOManager.getActiveIO(channel.getOwnerID()));
+  I2CBus *source = static_cast<I2CBus*>(IOManager.getActiveIO(channel.getOwnerID()));
   source->busyOpp = 0;
 
   // Call callback, if exists & has settings enabled for current reason
@@ -84,7 +88,7 @@ void I2CdmaCallback(DMA_CALLBACK_REASON reason, TransferChannel &channel,
 ///// SECTION -> I2C BUS (SERIAL)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-I2CSerial::I2CSerial(Sercom *s, uint8_t SDA, uint8_t SCL) : SDA(SDA), SCL(SCL) {
+I2CBus::I2CBus(Sercom *s, uint8_t SDA, uint8_t SCL) : SDA(SDA), SCL(SCL) {
   resetFields();
   baseType = TYPE_I2CSERIAL;
   this->s = s;                           ///////////////////////// ADD AN ASSERT HERE!
@@ -92,7 +96,7 @@ I2CSerial::I2CSerial(Sercom *s, uint8_t SDA, uint8_t SCL) : SDA(SDA), SCL(SCL) {
   init();
 }
 
-bool I2CSerial::requestData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16) {
+bool I2CBus::requestData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16) {
   
   // If error, bus not idle or busy dma -> return false, else -> reset flags
   if (criticalError || s->I2CM.STATUS.bit.BUSSTATE != I2C_BUS_IDLE_STATE 
@@ -123,7 +127,7 @@ bool I2CSerial::requestData(uint8_t deviceAddr, uint16_t registerAddr, bool reg1
 }
 
 
-bool I2CSerial::readData(int16_t readCount, void *dataDestination) {
+bool I2CBus::readData(int16_t readCount, void *dataDestination) {
 
   // Handle exceptions
   MIN(readCount, 0);
@@ -154,7 +158,7 @@ bool I2CSerial::readData(int16_t readCount, void *dataDestination) {
 }
 
 
-bool I2CSerial::writeData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16, 
+bool I2CBus::writeData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16, 
   int16_t writeCount, void *dataSourceAddr) {
   // Handle exceptions
   MIN(writeCount, 0);
@@ -193,7 +197,7 @@ bool I2CSerial::writeData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16,
 }
 
 
-bool I2CSerial::dataReady() { 
+bool I2CBus::dataReady() { 
   return (deviceAddr == 0
        && criticalError == ERROR_NONE
        && busyOpp == 0 
@@ -203,14 +207,14 @@ bool I2CSerial::dataReady() {
 }
 
 
-bool I2CSerial::isBusy() { 
+bool I2CBus::isBusy() { 
   return (busyOpp != 0
        || s->I2CM.STATUS.bit.BUSSTATE == 3
        || s->I2CM.STATUS.bit.BUSSTATE == 2); 
 }
 
 
-bool I2CSerial::resetBus(bool hardReset) {
+bool I2CBus::resetBus(bool hardReset) {
   // If DMA active -> stop it
   if (busyOpp != 0) {
     writeChannel->disable(false);
@@ -248,9 +252,9 @@ bool I2CSerial::resetBus(bool hardReset) {
 
 
 
-bool I2CSerial::init() {
+bool I2CBus::init() {
 
-  // Ensure given pins support I2CSerial transmission
+  // Ensure given pins support I2CBus transmission
   if (g_APinDescription[SCL].ulPinType != PIO_SERCOM 
   ||  g_APinDescription[SCL].ulPinType != PIO_SERCOM_ALT
   ||  g_APinDescription[SDA].ulPinType != PIO_SERCOM 
@@ -274,20 +278,20 @@ bool I2CSerial::init() {
   GCLK->PCHCTRL[SERCOM_REF[sNum].clock].bit.CHEN = 1;  // Enable clock channel
   GCLK->PCHCTRL[SERCOM_REF[sNum].clock].bit.GEN = 1;   // Enable clock generator
 
-  // Disable & reset the I2CSerial peripheral
+  // Disable & reset the I2CBus peripheral
   s->I2CM.CTRLA.bit.ENABLE = 0;
   while(s->I2CM.SYNCBUSY.bit.ENABLE);
   s->I2CM.CTRLA.bit.SWRST = 1;
   while(s->I2CM.SYNCBUSY.bit.SWRST);
 
-  // Configure the I2CSerial peripheral 
+  // Configure the I2CBus peripheral 
   s->I2CM.CTRLA.bit.MODE = 5;                // Enable master mode
   s->I2CM.CTRLB.bit.SMEN = 1;                // Enable "smart" mode -> Auto sends ACK on data read
   s->I2CM.BAUD.bit.BAUD                      // Calculate & set baudrate 
     = SERCOM_FREQ_REF / (2 * baudrate) - 7;  
   s->I2CM.INTENSET.bit.ERROR = 1;            // Enable error interrupt -> Other interrupt enabled by settings
 
-  // Re-enable I2CSerial peripheral
+  // Re-enable I2CBus peripheral
   s->I2CM.CTRLA.bit.ENABLE = 1;
   while(s->I2CM.SYNCBUSY.bit.ENABLE);
 
@@ -308,7 +312,7 @@ bool I2CSerial::init() {
 }
 
 
-bool I2CSerial::initDMA() {
+bool I2CBus::initDMA() {
 
   // Allocate 2 new DMA channel
   TransferChannel *newChannel1 = DMA.allocateTransferChannel(IOID);
@@ -370,7 +374,7 @@ bool I2CSerial::initDMA() {
 }
 
 
-void I2CSerial::exit() {
+void I2CBus::exit() {
 
   //If bus active -> send stop cmd
   if (s->I2CM.STATUS.bit.BUSSTATE != I2C_BUS_IDLE_STATE) {
@@ -409,7 +413,7 @@ void I2CSerial::exit() {
 }
 
 
-void I2CSerial::resetFields() {
+void I2CBus::resetFields() {
   // Fields
   Sercom *s = nullptr;                   
   readChannel = nullptr;       
@@ -429,7 +433,7 @@ void I2CSerial::resetFields() {
 }
 
 
-void I2CSerial::updateReg(int16_t registerAddr, bool reg16) {
+void I2CBus::updateReg(int16_t registerAddr, bool reg16) {
   if (reg16) { // Configure DMA and I2C peripheral to send 2 bytes
     this->registerAddr[0] = (uint8_t)(registerAddr >> 8);
     this->registerAddr[1] = (uint8_t)(registerAddr & UINT8_MAX);
@@ -449,12 +453,12 @@ void I2CSerial::updateReg(int16_t registerAddr, bool reg16) {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-I2CSerial::I2CSettings::I2CSettings(I2CSerial *super) {
+I2CBus::I2CSettings::I2CSettings(I2CBus *super) {
   this->super = super;
 }
 
 
-I2CSerial::I2CSettings &I2CSerial::I2CSettings::setBaudrate(uint32_t baudrate) {
+I2CBus::I2CSettings &I2CBus::I2CSettings::setBaudrate(uint32_t baudrate) {
   if (baudrate < I2C_MIN_BAUDRATE || baudrate > I2C_MAX_BAUDRATE) {
     settingsError = ERROR_SETTINGS_OOB;
     return *this;
@@ -472,12 +476,12 @@ I2CSerial::I2CSettings &I2CSerial::I2CSettings::setBaudrate(uint32_t baudrate) {
   return *this;
 }
 
-I2CSerial::I2CSettings &I2CSerial::I2CSettings::setCallback(IOCallback *callbackFunction) {
+I2CBus::I2CSettings &I2CBus::I2CSettings::setCallback(IOCallback *callbackFunction) {
   super->callback = callbackFunction;
   return *this;
 }
 
-I2CSerial::I2CSettings &I2CSerial::I2CSettings::setCallbackConfig(bool errorCallback, 
+I2CBus::I2CSettings &I2CBus::I2CSettings::setCallbackConfig(bool errorCallback, 
   bool requestCompleteCallback, bool readCompleteCallback, bool writeCompleteCallback) {
   super->errorCallback = errorCallback;
   super->requestCompleteCallback = requestCompleteCallback;
@@ -486,12 +490,12 @@ I2CSerial::I2CSettings &I2CSerial::I2CSettings::setCallbackConfig(bool errorCall
   return *this;
 }
 
-I2CSerial::I2CSettings &I2CSerial::I2CSettings::setSCLTimeoutConfig(bool enabled) {
+I2CBus::I2CSettings &I2CBus::I2CSettings::setSCLTimeoutConfig(bool enabled) {
   return changeCTRLA(SERCOM_I2CM_CTRLA_LOWTOUTEN, 
     ((uint8_t)enabled << SERCOM_I2CM_CTRLA_LOWTOUTEN_Pos));
 }
 
-I2CSerial::I2CSettings &I2CSerial::I2CSettings::setInactiveTimeout(int16_t timeoutConfig) {
+I2CBus::I2CSettings &I2CBus::I2CSettings::setInactiveTimeout(int16_t timeoutConfig) {
   if (timeoutConfig < 0 || timeoutConfig > I2C_MAX_SCLTIMEOUT_CONFIG) {
     settingsError = ERROR_SETTINGS_INVALID;
     return *this;
@@ -499,7 +503,7 @@ I2CSerial::I2CSettings &I2CSerial::I2CSettings::setInactiveTimeout(int16_t timeo
   return changeCTRLA(SERCOM_I2CM_CTRLA_INACTOUT_Msk, SERCOM_I2CM_CTRLA_INACTOUT(timeoutConfig));
 }
 
-I2CSerial::I2CSettings &I2CSerial::I2CSettings::setTransferSpeed(int16_t transferSpeedConfig) {
+I2CBus::I2CSettings &I2CBus::I2CSettings::setTransferSpeed(int16_t transferSpeedConfig) {
   if (transferSpeedConfig < 0 || transferSpeedConfig > I2C_MAX_TRANSFERSPEED) {
     settingsError = ERROR_SETTINGS_INVALID;
     return *this;
@@ -507,17 +511,17 @@ I2CSerial::I2CSettings &I2CSerial::I2CSettings::setTransferSpeed(int16_t transfe
   return changeCTRLA(SERCOM_I2CM_CTRLA_SPEED_Msk, SERCOM_I2CM_CTRLA_SPEED(transferSpeedConfig));
 }
 
-I2CSerial::I2CSettings &I2CSerial::I2CSettings::setSCLClientTimeoutConfig(bool enabled) {
+I2CBus::I2CSettings &I2CBus::I2CSettings::setSCLClientTimeoutConfig(bool enabled) {
   return changeCTRLA(SERCOM_I2CM_CTRLA_SEXTTOEN, 
     ((uint8_t)enabled << SERCOM_I2CM_CTRLA_MEXTTOEN_Pos));
 }
 
-I2CSerial::I2CSettings &I2CSerial::I2CSettings::setSCLHostTimeoutConfig(bool enabled) {
+I2CBus::I2CSettings &I2CBus::I2CSettings::setSCLHostTimeoutConfig(bool enabled) {
   return changeCTRLA(SERCOM_I2CM_CTRLA_MEXTTOEN, 
     ((uint8_t)enabled << SERCOM_I2CM_CTRLA_MEXTTOEN_Pos));
 }
 
-I2CSerial::I2CSettings &I2CSerial::I2CSettings::setSDAHoldTime(int16_t holdTimeConfig) {
+I2CBus::I2CSettings &I2CBus::I2CSettings::setSDAHoldTime(int16_t holdTimeConfig) {
   if (holdTimeConfig < 0 || holdTimeConfig > I2C_MAX_SDAHOLDTIME) {
     settingsError = ERROR_SETTINGS_INVALID;
     return *this;
@@ -525,12 +529,12 @@ I2CSerial::I2CSettings &I2CSerial::I2CSettings::setSDAHoldTime(int16_t holdTimeC
   return changeCTRLA(SERCOM_I2CM_CTRLA_SDAHOLD_Msk, SERCOM_I2CM_CTRLA_SDAHOLD(holdTimeConfig));
 }
 
-I2CSerial::I2CSettings &I2CSerial::I2CSettings::setSleepConfig(bool enabledDurringSleep) {
+I2CBus::I2CSettings &I2CBus::I2CSettings::setSleepConfig(bool enabledDurringSleep) {
   return changeCTRLA(SERCOM_I2CM_CTRLA_RUNSTDBY, 
     ((uint8_t)enabledDurringSleep << SERCOM_I2CM_CTRLA_RUNSTDBY_Pos));
 }
 
-I2CSerial::I2CSettings &I2CSerial::I2CSettings::changeCTRLA(const uint32_t clearMask, const uint32_t setMask) {
+I2CBus::I2CSettings &I2CBus::I2CSettings::changeCTRLA(const uint32_t clearMask, const uint32_t setMask) {
   if (super->s->I2CM.CTRLA.bit.ENABLE) {
     super->s->I2CM.CTRLA.bit.ENABLE = 0;
     while(super->s->I2CM.SYNCBUSY.bit.ENABLE);
@@ -549,13 +553,13 @@ I2CSerial::I2CSettings &I2CSerial::I2CSettings::changeCTRLA(const uint32_t clear
 ///// SECTION -> SPI SERIAL CLASS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-SPISerial::SPISerial(Sercom *s, int16_t SCK, int16_t PICO, int16_t POCI, int16_t CS) :
+SPIBus::SPIBus(Sercom *s, int16_t SCK, int16_t PICO, int16_t POCI, int16_t CS) :
   s(s), SCK(SCK), PICO(PICO), POCI(POCI), CS(CS) {
 
 }
 
 
-void SPISerial::init() {
+void SPIBus::init() {
   NVIC_ClearPendingIRQ(SERCOM_REF[sNum].baseIRQ);
   NVIC_DisableIRQ(SERCOM_REF[sNum].baseIRQ);
   NVIC_EnableIRQ(SERCOM_REF[sNum].baseIRQ);
@@ -569,12 +573,12 @@ void SPISerial::init() {
 }
 
 
-SPISerial::SPISettings &SPISerial::SPISettings::setClockPhaseConfig(int16_t clockPhaseConfig) {
+SPIBus::SPISettings &SPIBus::SPISettings::setClockPhaseConfig(int16_t clockPhaseConfig) {
   return *this;
 }
 
 
-SPISerial::SPISettings &SPISerial::SPISettings::changeCTRLA(uint32_t resetMask, uint32_t setMask) {
+SPIBus::SPISettings &SPIBus::SPISettings::changeCTRLA(uint32_t resetMask, uint32_t setMask) {
   if (!super->s->SPI.CTRLA.bit.ENABLE) {
     super->s->SPI.CTRLA.bit.ENABLE = 0;
     while(super->s->SPI.SYNCBUSY.bit.ENABLE);
@@ -583,8 +587,59 @@ SPISerial::SPISettings &SPISerial::SPISettings::changeCTRLA(uint32_t resetMask, 
   return *this;
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> ADCModule CLASS
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+void ADC0_0_Handler(void) {
+
+}
+
+ADCModule::ADCModule(Adc *moduleObj) {
+  adc = (moduleObj == nullptr ? ADC_DEFAULT_MODULE : moduleObj);
+
+  for (int16_t i = 0; i < sizeof(ADC_MODULES); i++) {
+    if (adc == ADC_MODULES[i]) adcNum = i;
+  }
+  resetFields();
+}
 
 
+bool ADCModule::begin() {
+  if (begun) return true;
+
+  if (adc->CTRLA.bit.ENABLE) {
+    currentError = ERROR_ADC_SYS;
+    return false;
+  }
+
+  // Enable ADC module
+  adc->CTRLA.bit.SWRST = 1;
+  while(adc->SYNCBUSY.bit.SWRST || adc->CTRLA.bit.SWRST);
+  adc->CTRLA.bit.ENABLE = 1;
+  while(adc->SYNCBUSY.bit.ENABLE);
+
+  // Enable interrupts
+  int16_t baseIrq = (adcNum ? ADC1_0_IRQn : ADC0_0_IRQn); 
+  for (int16_t i = 0; i < ADC_IRQ_COUNT; i++) {
+    NVIC_ClearPendingIRQ((IRQn_Type)(baseIrq + i));
+    NVIC_SetPendingIRQ((IRQn_Type)(baseIrq + i));
+    NVIC_EnableIRQ((IRQn_Type)(baseIrq + i));
+  }
+
+  
+}
+
+
+void ADCModule::resetFields() {
+  begun = false;
+  irqPriority = 0;
+  for (int16_t i = 0; i < ADC_MAX_PINS; i++) {
+    if (pins[i] != nullptr) delete pins[i];
+    pins[i] == nullptr;
+  }
+  // TO COMPLETE ONCE MORE FIELDS ARE ADDED...
+}
 
 
 

@@ -61,6 +61,7 @@ class TransferDescriptor {
 
   public:
     TransferDescriptor(void *source, void *destination, uint8_t transferAmountBytes);
+    TransferDescriptor();
 
     TransferDescriptor &setSource(uint32_t sourceAddr, bool correctAddress);
     TransferDescriptor &setSource(void *sourcePtr, bool correctAddress);

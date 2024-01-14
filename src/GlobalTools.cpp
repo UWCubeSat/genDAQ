@@ -2,6 +2,7 @@
 #include <GlobalTools.h>
 
 
+
 ErrorSys_ &Error;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -106,6 +107,83 @@ Timeout::operator uint32_t() {
 
 Timeout::operator bool() {
   return triggered();
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> ERROR SYSTEM (NOT FINISHED)
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+void ErrorSys_::assert(bool statement, ERROR_ID type, int16_t lineNum, 
+  const char *function, const char *file) { 
+  
+  if (statement) return;
+  if (!ERRSYS_ASSERTS_ENABLED) return;
+
+  if (DEBUG_MODE && SERIAL_PORT_MONITOR) {
+    printError(type, lineNum, function, file);
+  }
+  if (ERRSYS_ASSERT_RESET_ENABLED) {
+    pinMode(ERRSYS_ASSERT_LED_PRIMARY, OUTPUT);
+    pinMode(ERRSYS_ASSERT_LED_SECONDARY, OUTPUT);
+    digitalWrite(ERRSYS_ASSERT_LED_PRIMARY, HIGH);
+
+    for (int16_t i = 0; i < ERRSYS_ASSERT_LED_PULSES; i++) {
+      digitalWrite(ERRSYS_ASSERT_LED_SECONDARY, HIGH);
+      delay(ERRSYS_ASSERT_LED_DELAY_MS);
+      digitalWrite(ERRSYS_ASSERT_LED_SECONDARY, LOW);
+      delay(ERRSYS_ASSERT_LED_DELAY_MS);
+    }
+    digitalWrite(ERRSYS_ASSERT_LED_PRIMARY, LOW);
+  }
+
+  if (ERRSYS_ASSERT_RESET_ENABLED) {
+    __DMB;
+    NVIC_SystemReset();
+    while(true);
+  }
+}
+
+void ErrorSys_::deny(bool statement, ERROR_ID type, int16_t lineNum, 
+  const char *function, const char *file) {
+  return assert(!statement, type, lineNum, function, file);
+}
+
+void ErrorSys_::throwError(ERROR_ID type, int16_t lineNum, 
+  const char *function, const char *file) {
+
+  eaWriteIndex = (eaWriteIndex == ERRSYS_MAX_ERRORS - 1 ? 0 : eaWriteIndex++);
+  if (eaWriteIndex == eaReadIndex) eaReadIndex++;
+  ErrorArray[eaWriteIndex] = {type, lineNum, function, file};
+
+  if (DEBUG_MODE) {
+    printError(type, lineNum, function, file);
+  }
+  if (ERRSYS_ERROR_LED_ENABLED) {
+    pinMode(ERRSYS_ERROR_LED, OUTPUT);
+    digitalWrite(ERRSYS_ERROR_LED, HIGH);
+    delay(ERRSYS_ERROR_LED_DELAY_MS);
+    digitalWrite(ERRSYS_ERROR_LED, LOW);
+    pinMode(ERRSYS_ERROR_LED, OUTPUT);
+  }
+}
+
+void ErrorSys_::printError(ERROR_ID error, int16_t lineNum, const char *funcName, 
+  const char *fileName) {
+  if (!SERIAL_PORT_MONITOR) {
+    SERIAL_PORT_MONITOR.begin(0);
+    bool timeout = false;
+    for (int16_t i = 0; i <= ERRSYS_SERIAL_TIMEOUT; i++) {
+      delay(1);
+      if (SERIAL_PORT_MONITOR) break;
+      if (i == ERRSYS_SERIAL_TIMEOUT) return;
+    }
+  }
+  SERIAL_PORT_MONITOR.print("ASSERT TRIGGERED -> ");
+  SERIAL_PORT_MONITOR.print("{ Type: " + (String)((uint8_t)error) + "}, ");
+  SERIAL_PORT_MONITOR.print("{ Line: " + (String)lineNum + "}, ");
+  SERIAL_PORT_MONITOR.print("{ Function: " + (String)funcName + "}, ");
+  SERIAL_PORT_MONITOR.print("{ File: " + (String)fileName + "}");
+  SERIAL_PORT_MONITOR.println();
 }
 
 

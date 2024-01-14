@@ -12,24 +12,59 @@
 #include <GlobalDefs.h>
 #include <DMA.h>
 
-class IO;
-class I2CSerial;
+struct SerialPin;
+struct AnalogPin;
+struct DigitalPin;
 
-class SPISerial;
+class SerialBus;
+class I2CBus;
+class SPIBus;
 class UARTBus;
-class AnalogPin;
-class DigitalPin;
+
+class ADCModule;
 
 void SercomIRQHandler();
 
 typedef void (*IOCallback)(int16_t sourceSercomID, int16_t param1, int16_t param2);
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> PIN STRUCTS
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+struct SerialPin {
+  int16_t num;
+  bool initialized;
+
+  bool init();
+
+  bool exit();
+};
+
+struct AnalogPin {
+  int16_t num;
+  bool initialized;
+
+  bool init();
+
+  bool exit();
+};
+
+struct DigitalPin {
+  int16_t num;
+  bool initialized;
+
+  bool init();
+
+  bool exit();
+};
+
+//////////////// NOTE -> REFACTOR I2C & SPI CLASS TO UTALIZE PIN OBJ INSTEAD OF JUST NUMBERS
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-///// SECTION -> IO BASE CLASS
+///// SECTION -> SerialBus BASE CLASS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-class IO {
+class SerialBus {
   public:
 
     int16_t getIOID();
@@ -41,11 +76,9 @@ class IO {
     IO_TYPE baseType = TYPE_UNKNOWN;
     bool enabled;
 
-    IO() {}
+    SerialBus() {}
 
     Sercom *allocSercom();
-
-    int16_t allocPin();
 
     void freeSercom(Sercom *freedInstance);
 
@@ -59,11 +92,11 @@ class IO {
 ///// SECTION -> I2C SERIAL CLASS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-class I2CSerial : public IO {
+class I2CBus : public SerialBus {
   public:
-    I2CSerial(Sercom *s, uint8_t SDA, uint8_t SCL);
+    I2CBus(Sercom *s, uint8_t SDA, uint8_t SCL);
 
-    ~I2CSerial() { exit(); }
+    ~I2CBus() { exit(); }
 
     bool requestData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16);
     
@@ -106,9 +139,9 @@ class I2CSerial : public IO {
         I2CSettings &setSleepConfig(bool enableDurringSleep);
 
       protected:
-        friend I2CSerial;
-        I2CSerial *super;
-        explicit I2CSettings(I2CSerial *super);
+        friend I2CBus;
+        I2CBus *super;
+        explicit I2CSettings(I2CBus *super);
         ERROR_ID settingsError;
 
          inline I2CSettings &changeCTRLA(const uint32_t clearMask, const uint32_t setMask);
@@ -164,10 +197,10 @@ class I2CSerial : public IO {
 ///// SECTION -> SPI SERIAL CLASS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-class SPISerial : public IO {
+class SPIBus : public SerialBus {
   public:
 
-    SPISerial(Sercom *s, int16_t SCK, int16_t PICO, int16_t POCI, int16_t CS);
+    SPIBus(Sercom *s, int16_t SCK, int16_t PICO, int16_t POCI, int16_t CS);
 
     bool readData(int16_t byteCount, uint32_t dataDestinationAddr);
 
@@ -184,9 +217,9 @@ class SPISerial : public IO {
     void setDefault();
 
     private:
-      friend SPISerial;
-      SPISerial *super;
-      explicit SPISettings(SPISerial *super);
+      friend SPIBus;
+      SPIBus *super;
+      explicit SPISettings(SPIBus *super);
 
       SPISettings & changeCTRLA(const uint32_t resetMask, const uint32_t setMask);
 
@@ -214,28 +247,67 @@ class SPISerial : public IO {
 ///// SECTION -> UART SERIAL CLASS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-class UARTBus : public IO {
+class UARTBus : public SerialBus {
 
 
 
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-///// SECTION -> ANALOG PIN CLASS
+///// SECTION -> ADC MODULE CLASS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-class AnalogPin : public IO {
 
+class ADCModule {
 
+  public:
+
+    ADCModule(Adc *moduleObj);
+
+    bool begin();
+
+    bool end();
+
+    bool enable();
+
+    bool disable();
+
+    struct ADCSettings {
+
+      // SETTINGS HERE....
+
+    private:
+      friend ADCModule;
+      ADCModule *super;
+      explicit ADCSettings(ADCModule *super);
+  }settings{this};
+
+  protected:
+    //// PROPERTIES ////
+    friend ADCSettings;
+    friend AnalogPin;
+    Adc *adc;
+    int16_t adcNum;
+
+    //// FIELDS ////
+    bool begun;
+    AnalogPin *pins[ADC_MAX_PINS];
+    ERROR_ID currentError;
+
+    //// SETTINGS ////
+    uint8_t irqPriority = 1;
+
+    void resetFields();
 };
+
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> DIGITAL PIN CLASS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-class digitalPin : public IO {
+class digitalPin : public SerialBus {
 
 
 };

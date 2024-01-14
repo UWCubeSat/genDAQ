@@ -1,13 +1,14 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-///// FILE -> GLOBAL 
+///// FILENAME -> GLOBAL 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+#include <Reset.h>
 #include <inttypes.h>
 #include <GlobalDefs.h>
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-///// SECTION -> HELPER FUNCTIONS
+///// SECTION -> HELPER funcNameS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 uint32_t getAddr(void *pointer);
@@ -61,17 +62,43 @@ class Timeout {
 ///// SECTION -> ERROR SYSTEM
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
+#define ASSERT(statement, type) Error.assert(statement, type, __LINE__, __FUNC__, __FILE__)
+#define DENY(statement, type) Error.deny(statement, type __LINE__, __FUNC__, __FILE__)
+#define THROW(type) Error.throwError(type, __LINE__, __FUNC__, __FILE__)
+
 class ErrorSys_ {
-  protected: 
     ErrorSys_() {}
+    
 
   public:
 
-    void throwError(ERROR_ID error);
+    void throwError(ERROR_ID error, int16_t lineNum, const char *funcName, 
+                    const char *fileName);
 
-    bool assert(bool statement, ASSERT_ID error);
+    void assert(bool statement, ERROR_ID type, int16_t lineNum, const char *funcName, 
+                const char *fileName);
 
-    bool deny(bool statement, ASSERT_ID error);
+    void deny(bool statement, ERROR_ID error, int16_t lineNum, const char *funcName, 
+              const char *fileName);
+
+    ////// TO DO -> ADD A WAY TO ACCESS THE THROWN ERRORS
+    ////// TO DO -> ADD A WAY TO SAVE ASSERT TYPE ACROSS SYS RESETS
+
+  protected:
+
+    struct Error {
+      ERROR_ID id;
+      int16_t line;
+      const char *funcName;
+      const char *fileNameNameName;
+    };
+
+    static Error ErrorArray[ERRSYS_MAX_ERRORS];
+    static int16_t eaReadIndex;
+    static int16_t eaWriteIndex;
+
+    void printError(ERROR_ID error, int16_t lineNum, const char *funcName, 
+              const char *fileName);
 
 };
 extern ErrorSys_ &Error;

@@ -254,6 +254,9 @@ void DMAC_0_Handler(void) {
 ///// SECTION -> DMA DESCRIPTOR METHODS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
+// Null transfer descriptor
+TransferDescriptor::TransferDescriptor() : TransferDescriptor(nullptr, nullptr, 0) {}
+
 TransferDescriptor::TransferDescriptor(void *source, void *destination, 
   uint8_t transferAmountBytes) {
   currentDesc = &desc;
