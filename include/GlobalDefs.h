@@ -27,11 +27,18 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #define DEBUG_MODE true
+#define BOARD_FEATHER_M4_EXPRESS_CAN__
+#define BOARD_PIN_COUNT 44
+#define BOARD_ADC_PERIPH 1
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-///// SECTION -> ERROR SYSTEM
+///// SECTION -> GLOBAL TOOLS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
+//// TIMEOUT CLASS ////
+#define TO_DEFAULT_TIMEOUT 500
+
+//// ERROR SYS ASSERTS ////
 #define ERRSYS_ASSERTS_ENABLED true
 #define ERRSYS_ASSERT_RESET_ENABLED true
 #define ERRSYS_ASSERT_LED_ENABLED true
@@ -40,16 +47,20 @@
 #define ERRSYS_ASSERT_LED_PRIMARY 7
 #define ERRSYS_ASSERT_LED_SECONDARY 13
 
+//// ERROR SYS THROW ////
 #define ERRSYS_ERROR_LED_ENABLED true
 #define ERRSYS_ERROR_LED_DELAY_MS 100
 #define ERRSYS_ERROR_LED 7
 
+//// ERROR SYS MISC ////
 #define ERRSYS_SERIAL_TIMEOUT 1000
 #define ERRSYS_MAX_ERRORS 30
 
+//// ENUMS ////
 enum ERROR_ID : uint8_t {
   ERROR_NONE,
   ERROR_UNKNOWN,
+  ERROR_NULLPTR,
   ERROR_SETTINGS_OOB,
   ERROR_SETTINGS_INVALID,
   ERROR_SETTINGS_OTHER,
@@ -64,7 +75,9 @@ enum ERROR_ID : uint8_t {
   ERROR_COM_RECEIVE,
   ERROR_COM_MEM,
 
-  ERROR_ADC_SYS
+  ERROR_ADC_SYS,
+  ERROR_ADC_DMA,
+  ERROR_ADC_EXREF
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -88,6 +101,7 @@ enum ERROR_ID : uint8_t {
 #define DMA_DEFAULT_INCREMENT_DESTINATION 1
 #define DMA_DEFAULT_CRC_MODE 0
 #define DMA_DEFAULT_CRC_LENGTH 16
+#define DMA_DEFAULT_TRANSFER_AMOUNT 1
 
 //// DMA DEFAULT CHANNEL SETTINGS ////
 #define DMA_DEFAULT_TRANSMISSION_THRESHOLD 0
@@ -238,20 +252,29 @@ enum CRC_MODE : uint8_t {
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-///// SECTION -> IO
+///// SECTION -> SIO
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define IO_MAX_INSTANCES 10
-#define IO_MAX_SERCOM 5
-#define IO_MAX_PORTS 25
+#define SERCOM_IRQ_COUNT 4
+#define SERCOM_FREQ_REF 48000000ul
 
-enum IO_TYPE {
+struct SERCOM_REF_OBJ {
+  uint8_t DMAReadTrigger; 
+  uint8_t DMAWriteTrigger;
+  uint8_t clock;
+  IRQn_Type baseIRQ;
+};
+
+
+#define SIO_MAX_INSTANCES 10
+#define SIO_MAX_SERCOM 5
+#define SIO_MAX_PORTS 25
+
+enum SIO_TYPE {
   TYPE_UNKNOWN,
   TYPE_I2CSERIAL,
   TYPE_SPISERIAL,
-  TYPE_UARTSERIAL,
-  TYPE_ANALOGPIN,
-  TYPE_DIGITALPIN
+  TYPE_UARTSERIAL
 };
 
 /////////////////////////////////////////// I2C SERIAL ////////////////////////////////////////////
@@ -287,33 +310,25 @@ enum I2C_STATUS : uint8_t {
   I2C_ERROR
 };
 
-/////////////////////////////////////////// ANALOG PIN ////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> ADC
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #define ADC_MAX_PINS 12
 #define ADC_IRQ_COUNT 2
+#define ADC_MODULE_COUNT 2
+#define ADC_MAX_MODULE_NUM 1
 #define ADC_DEFAULT_MODULE ADC0
+#define ADC_DEFAULT_MODULE_NUM 0
+
+#define ADC_DB_LENGTH 512
+#define ADC_DB_INCREMENT 124
+#define ADC_DEFAULT_DB_OVERCLEAR 32
 
 enum ADC_MODULE : uint8_t {
   ADC_MODULE0,
   ADC_MODULE1
 };
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-///// SECTION -> SERCOM
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-#define SERCOM_IRQ_COUNT 4
-#define SERCOM_FREQ_REF 48000000ul
-
-struct SERCOM_REF_OBJ {
-  uint8_t DMAReadTrigger; 
-  uint8_t DMAWriteTrigger;
-  uint8_t clock;
-  IRQn_Type baseIRQ;
-};
-
-
-
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> COM CLASS
@@ -359,12 +374,6 @@ struct SERCOM_REF_OBJ {
   | (COM_DEFAULT_SEND_FAIL << COM_REASON_SEND_FAIL)          \
   | (COM_DEFAULT_RESET << COM_REASON_RESET)                  \
   | (COM_DEFAULT_SOF << COM_REASON_SOF))
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-///// SECTION -> MISC
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-#define TO_DEFAULT_TIMEOUT 500
 
 
 

@@ -8,12 +8,28 @@
 #include <GlobalDefs.h>
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-///// SECTION -> HELPER funcNameS
+///// SECTION -> PINS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-uint32_t getAddr(void *pointer);
+// TO DO
 
-void *getVoid(uint32_t addr);
+class PinManager_ {
+  
+  public:
+
+    bool attachPin(uint8_t pinNumber);
+
+    void detachPin(uint8_t pinNumber);
+
+    bool pinAvailable(uint8_t pinNumber);
+
+  private:
+    bool attachedPins[PINS_COUNT] = { false };
+
+    PinManager_() {}
+
+};
+extern PinManager_ &PinManager;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> TIMEOUT SYSTEM

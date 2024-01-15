@@ -80,7 +80,7 @@ void DMAUtility::end() {
 }
 
 
-TransferChannel &DMAUtility::getTransferChannel(int16_t channelIndex) {
+TransferChannel &DMAUtility::getChannel(int16_t channelIndex) {
   CLAMP(channelIndex, 0, DMA_MAX_CHANNELS - 1);
   if (!channelArray[channelIndex].allocated) {
     channelArray[channelIndex].init(-1);
@@ -90,12 +90,12 @@ TransferChannel &DMAUtility::getTransferChannel(int16_t channelIndex) {
 }
 
 TransferChannel &DMAUtility::operator[] (int16_t channelIndex) {
-  return getTransferChannel(channelIndex);
+  return getChannel(channelIndex);
 }
 
 
 
-TransferChannel *DMAUtility::allocateTransferChannel(int16_t ownerID) {
+TransferChannel *DMAUtility::allocateChannel(int16_t ownerID) {
   if (ownerID < -1) ownerID = -1;
 
   // Iterate through channels to find one that is not allocated
@@ -111,8 +111,8 @@ TransferChannel *DMAUtility::allocateTransferChannel(int16_t ownerID) {
   }
   return nullptr;
 }
-TransferChannel *DMAUtility::allocateTransferChannel() {
-  return allocateTransferChannel(-1);
+TransferChannel *DMAUtility::allocateChannel() {
+  return allocateChannel(-1);
 }
 
 
@@ -168,7 +168,7 @@ int16_t getTrigger(bool swTriggerFlag) {
 }
 
 void DMAC_0_Handler(void) {
-  TransferChannel &channel = DMA.getTransferChannel(DMAC->INTPEND.bit.ID);
+  TransferChannel &channel = DMA.getChannel(DMAC->INTPEND.bit.ID);
   DMACallbackFunction callback = channel.callback;
   DMA_CALLBACK_REASON reason = REASON_UNKNOWN;
   uint8_t interruptTrigger = 0;
@@ -263,20 +263,34 @@ TransferDescriptor::TransferDescriptor(void *source, void *destination,
   baseSourceAddr = 0;
   baseDestAddr = 0;
   primaryBound = false;
-  
-  // Set source, dest & transfer amount
   currentDesc->BTCNT.bit.BTCNT = transferAmountBytes;
-  if (source != nullptr) {
-    currentDesc->SRCADDR.bit.SRCADDR = reinterpret_cast<uint32_t>(source);
+
+  // Set source, dest & transfer amount
+  uint32_t src = (source == nullptr) ? 0 : reinterpret_cast<uint32_t>(source);
+  uint32_t dest = (destination == nullptr) ? 0 : reinterpret_cast<uint32_t>(destination);
+  if (src != 0) {
+    currentDesc->SRCADDR.bit.SRCADDR = src;
   } else {
     currentDesc->SRCADDR.reg |= DMAC_SRCADDR_RESETVALUE;
   }
-  if (destination != nullptr) {
-    currentDesc->DSTADDR.bit.DSTADDR = reinterpret_cast<uint32_t>(destination);
+  if (dest != 0) {
+    currentDesc->DSTADDR.bit.DSTADDR = src;
   } else {
     currentDesc->DSTADDR.reg |= DMAC_SRCADDR_RESETVALUE;
   }
   setDefault();
+}
+
+TransferDescriptor::TransferDescriptor(TransferDescriptor &other) {
+  currentDesc = &desc;
+  baseSourceAddr = 0;
+  baseDestAddr = 0;
+  primaryBound = false;
+
+  memcpy(&desc, other.currentDesc, sizeof(DmacDescriptor));
+  currentDesc->DESCADDR.bit.DESCADDR = 0;
+  baseSourceAddr = other.baseSourceAddr;
+  baseDestAddr = other.baseDestAddr;
 }
 
 TransferDescriptor &TransferDescriptor::setSource(uint32_t sourceAddr,
@@ -416,9 +430,12 @@ void TransferDescriptor::setDefault() {
   currentDesc->BTCTRL.bit.SRCINC = DMA_DEFAULT_INCREMENT_SOURCE;
   currentDesc->BTCTRL.bit.STEPSEL = DMA_DEFAULT_STEPSELECTION;
   currentDesc->BTCTRL.bit.STEPSIZE = DMA_DEFAULT_STEPSIZE;
+  currentDesc->BTCNT.bit.BTCNT = DMA_DEFAULT_TRANSFER_AMOUNT;
   isValid();
   baseSourceAddr = 0;
   baseDestAddr = 0;
+  currentDesc->SRCADDR.bit.SRCADDR = baseSourceAddr;
+  currentDesc->DESCADDR.bit.DESCADDR = baseDestAddr;
 }
 
 // Link is never unbound -> would take too much mem to save all linked descriptors
@@ -524,6 +541,27 @@ void TransferChannel::TransferSettings::removeExternalTrigger() {
   super->externalTrigger = TRIGGER_SOFTWARE;
 }
 
+void TransferChannel::TransferSettings::equals(TransferChannel &other) {
+  DMAC->Channel[super->channelIndex].CHCTRLA.reg &= ~DMAC_CHCTRLA_MASK;
+  DMAC->Channel[super->channelIndex].CHCTRLA.reg
+    |= DMAC->Channel[super->channelIndex].CHCTRLA.reg;
+
+  DMAC->Channel[super->channelIndex].CHPRILVL.bit.PRILVL 
+    = DMAC->Channel[other.channelIndex].CHPRILVL.bit.PRILVL;
+
+  super->callback = other.callback;
+  super->externalTrigger = other.externalTrigger;
+
+  if (super->descriptorCount > 0) {
+    if (other.descriptorsLooped && !super->descriptorsLooped) {
+      super->loopDescriptors(true);
+    } else if (!other.descriptorsLooped && super->descriptorsLooped) {
+      super->unloopDescriptors(true);
+    }
+  }
+  super->descriptorsLooped = other.descriptorsLooped;
+}
+ 
 void TransferChannel::TransferSettings::setDefault() {
   DMAC->Channel[super->channelIndex].CHCTRLA.bit.BURSTLEN = DMA_DEFAULT_BURST_LENGTH;
   DMAC->Channel[super->channelIndex].CHCTRLA.bit.THRESHOLD = DMA_DEFAULT_TRANSMISSION_THRESHOLD;
@@ -531,11 +569,14 @@ void TransferChannel::TransferSettings::setDefault() {
   DMAC->Channel[super->channelIndex].CHCTRLA.bit.TRIGSRC = DMA_DEFAULT_TRIGGER_SOURCE;
   DMAC->Channel[super->channelIndex].CHPRILVL.bit.PRILVL = DMA_DEFAULT_PRIORITY_LVL;
   DMAC->Channel[super->channelIndex].CHCTRLA.bit.RUNSTDBY = DMA_DEFAULT_RUN_STANDBY;
+
   super->callback = nullptr;
   super->externalTrigger = DMA_DEFAULT_TRIGGER_SOURCE;
+
   if (super->descriptorsLooped && super->descriptorCount != 0) {
     super->unloopDescriptors(true);
   }
+  super->descriptorsLooped = false;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1188,6 +1229,9 @@ int16_t TransferChannel::setOwnerID(int16_t newOwnerID) {
 }
 
 
+uint8_t TransferChannel::getChannelNum() { return channelIndex; }
+
+
 DmacDescriptor *TransferChannel::getDescriptor(int16_t descriptorIndex) {
   // If target descriptor cached -> use that one
   if (previousIndex == descriptorIndex) return previousDescriptor;
@@ -1340,7 +1384,7 @@ ChecksumGen::ChecksumGen(int16_t ownerID) :
       uniqueID = i;
     }
   }
-  channel = DMA.allocateTransferChannel(uniqueID);                                               
+  channel = DMA.allocateChannel(uniqueID);                                               
 }
 
 

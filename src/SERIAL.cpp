@@ -1,5 +1,5 @@
 
-#include <IO.h>
+#include <SERIAL.h>
 
 inline Sercom *GET_SERCOM(int16_t sercomNum) {
   Sercom *s = SERCOM0;
@@ -41,32 +41,25 @@ const SERCOM_REF_OBJ SERCOM_REF[] = {
   {SERCOM5_DMAC_ID_RX, SERCOM5_DMAC_ID_TX, SERCOM5_GCLK_ID_CORE, SERCOM5_0_IRQn} 
 };
 
-Adc *ADC_MODULES[] = {ADC0, ADC1};
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> SERCOM_INTERRUPT_HANDLERS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-//// NEEDS TO BE DONE!!!
-/*
 void SercomIRQHandler() {
 
 }
-*/
-
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> SERIAL BUS (BASE CLASS)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-int16_t SerialBus::getIOID() { return IOID; }
+int16_t SIOBus::getSIOid() { return SIOid; }
 
-IO_TYPE SerialBus::getType() { return baseType; }
+SIO_TYPE SIOBus::getType() { return baseType; }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> I2C DMA INTERRUPT CALLBACK
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-
 
 // Note -> Interrupt connected to DMA -> handles errors & busy flag only
 void I2CdmaCallback(DMA_CALLBACK_REASON reason, TransferChannel &channel, 
@@ -78,11 +71,10 @@ void I2CdmaCallback(DMA_CALLBACK_REASON reason, TransferChannel &channel,
 
   // Call callback, if exists & has settings enabled for current reason
   if (source->errorCallback && reason == REASON_ERROR) {
-    (*source->callback)(source->IOID, error, 0);
+    (*source->callback)(source->SIOid, error, 0);
   }
   */
 }
-
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> I2C BUS (SERIAL)
@@ -91,7 +83,7 @@ void I2CdmaCallback(DMA_CALLBACK_REASON reason, TransferChannel &channel,
 I2CBus::I2CBus(Sercom *s, uint8_t SDA, uint8_t SCL) : SDA(SDA), SCL(SCL) {
   resetFields();
   baseType = TYPE_I2CSERIAL;
-  this->s = s;                           ///////////////////////// ADD AN ASSERT HERE!
+  this->s = s;                           
   this->sNum = GET_SERCOM_NUM(s);
   init();
 }
@@ -315,8 +307,8 @@ bool I2CBus::init() {
 bool I2CBus::initDMA() {
 
   // Allocate 2 new DMA channel
-  TransferChannel *newChannel1 = DMA.allocateTransferChannel(IOID);
-  TransferChannel *newChannel2 = DMA.allocateTransferChannel(IOID);
+  TransferChannel *newChannel1 = DMA.allocateChannel(SIOid);
+  TransferChannel *newChannel2 = DMA.allocateChannel(SIOid);
   if (newChannel1 == nullptr || newChannel2 == nullptr) return false;
 
   // Channels are not null -> set fields
@@ -476,7 +468,7 @@ I2CBus::I2CSettings &I2CBus::I2CSettings::setBaudrate(uint32_t baudrate) {
   return *this;
 }
 
-I2CBus::I2CSettings &I2CBus::I2CSettings::setCallback(IOCallback *callbackFunction) {
+I2CBus::I2CSettings &I2CBus::I2CSettings::setCallback(SIOCallback *callbackFunction) {
   super->callback = callbackFunction;
   return *this;
 }
@@ -586,61 +578,5 @@ SPIBus::SPISettings &SPIBus::SPISettings::changeCTRLA(uint32_t resetMask, uint32
   }
   return *this;
 }
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-///// SECTION -> ADCModule CLASS
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-void ADC0_0_Handler(void) {
-
-}
-
-ADCModule::ADCModule(Adc *moduleObj) {
-  adc = (moduleObj == nullptr ? ADC_DEFAULT_MODULE : moduleObj);
-
-  for (int16_t i = 0; i < sizeof(ADC_MODULES); i++) {
-    if (adc == ADC_MODULES[i]) adcNum = i;
-  }
-  resetFields();
-}
-
-
-bool ADCModule::begin() {
-  if (begun) return true;
-
-  if (adc->CTRLA.bit.ENABLE) {
-    currentError = ERROR_ADC_SYS;
-    return false;
-  }
-
-  // Enable ADC module
-  adc->CTRLA.bit.SWRST = 1;
-  while(adc->SYNCBUSY.bit.SWRST || adc->CTRLA.bit.SWRST);
-  adc->CTRLA.bit.ENABLE = 1;
-  while(adc->SYNCBUSY.bit.ENABLE);
-
-  // Enable interrupts
-  int16_t baseIrq = (adcNum ? ADC1_0_IRQn : ADC0_0_IRQn); 
-  for (int16_t i = 0; i < ADC_IRQ_COUNT; i++) {
-    NVIC_ClearPendingIRQ((IRQn_Type)(baseIrq + i));
-    NVIC_SetPendingIRQ((IRQn_Type)(baseIrq + i));
-    NVIC_EnableIRQ((IRQn_Type)(baseIrq + i));
-  }
-
-  
-}
-
-
-void ADCModule::resetFields() {
-  begun = false;
-  irqPriority = 0;
-  for (int16_t i = 0; i < ADC_MAX_PINS; i++) {
-    if (pins[i] != nullptr) delete pins[i];
-    pins[i] == nullptr;
-  }
-  // TO COMPLETE ONCE MORE FIELDS ARE ADDED...
-}
-
-
 
 

@@ -30,12 +30,12 @@ class DMAUtility {
 
       void end();
 
-      TransferChannel &getTransferChannel(int16_t channelIndex);
+      TransferChannel &getChannel(int16_t channelIndex);
 
       TransferChannel &operator [] (int16_t channelIndex);
 
-      TransferChannel *allocateTransferChannel();
-      TransferChannel *allocateTransferChannel(int16_t ownerID);
+      TransferChannel *allocateChannel();
+      TransferChannel *allocateChannel(int16_t ownerID);
 
       void freeChannel(int16_t channelIndex);
       void freeChannel(TransferChannel *channel);
@@ -62,8 +62,9 @@ class TransferDescriptor {
   public:
     TransferDescriptor(void *source, void *destination, uint8_t transferAmountBytes);
     TransferDescriptor();
+    TransferDescriptor(TransferDescriptor &other);
 
-    TransferDescriptor &setSource(uint32_t sourceAddr, bool correctAddress);
+    TransferDescriptor &setSource(uint32_t sourceAddr, bool correctAddress);  // TO DO -> ADD setSource & setDestination for volatile void ptr
     TransferDescriptor &setSource(void *sourcePtr, bool correctAddress);
 
     TransferDescriptor &setDestination(uint32_t destinationAddr, bool correctAddress);
@@ -84,6 +85,8 @@ class TransferDescriptor {
     bool isBindable();
 
     bool isValid();
+
+    bool getError(); // TO DO
 
   private:
 
@@ -167,6 +170,8 @@ class TransferChannel {
 
     ERROR_ID getError();
 
+    uint8_t getChannelNum();
+
     struct TransferSettings {
       
         TransferSettings &setTransferThreshold(int16_t elements);
@@ -193,6 +198,8 @@ class TransferChannel {
         void removeExternalTrigger();
 
         void setDefault();
+
+        void equals(TransferChannel &other);
 
       private:
         friend TransferChannel;
