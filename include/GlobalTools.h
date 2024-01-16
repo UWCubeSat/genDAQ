@@ -7,6 +7,11 @@
 #include <inttypes.h>
 #include <GlobalDefs.h>
 
+// IF EITHER = TRUE, APP IS ERASED ON RESET
+// FORCED BY EITHER ASSERT OR RAM ERROR
+#define ERRSYS_ERASE_ON_RESET false
+#define ERRSYS_BOOTMODE_ON_RESET true
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> PINS
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -119,4 +124,36 @@ class ErrorSys_ {
 };
 extern ErrorSys_ &Error;
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> SMART EEPROM MANAGER
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+class EEPROMManager_ {
+
+  public:
+
+    bool init(uint32_t minBytes, bool restartNow);
+
+    bool isInit();
+
+    bool allocateBlock();
+
+    bool isBusy();
+
+    bool clear();
+
+    bool end();
+
+  private:
+    EEPROMManager_() {}
+
+    uint32_t totalSize;
+    uint16_t blockSize;
+    bool instanceInit;
+
+    bool initialized(); // TO DO 
+
+};
+
+extern EEPROMManager_ &EEPROM;
 

@@ -1,9 +1,9 @@
 
 #include <GlobalTools.h>
 
-
-
+// Singletons
 ErrorSys_ &Error;
+EEPROMManager_ &EEPROM;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> TIMEOUT SYSTEM
@@ -119,6 +119,28 @@ PinManager_ &PinManager;
 ///// SECTION -> ERROR SYSTEM (NOT FINISHED)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
+__attribute__ ((long_call, section (".ramfunc")))
+static void eraseProg(bool enterBootMode) {
+    __disable_irq();
+
+  // Erase program by entering boot mode
+  if (enterBootMode) {
+    #define BOOT_REG 0xf01669efUL;
+    unsigned long *trig = (unsigned long*)(HSRAM_ADDR + HSRAM_SIZE - 4);
+    *trig = BOOT_REG; // <- This erases prog & enters boot mode
+  
+  // Erase program with NVMC
+  } else {
+    #if defined(__SAMD51__) 
+      while(!NVMCTRL->STATUS.bit.READY);
+      NVMCTRL->ADDR.reg  = 0x00004004;
+      NVMCTRL->CTRLB.reg = NVMCTRL_CTRLB_CMD_EB | NVMCTRL_CTRLB_CMDEX_KEY;
+    #endif
+  }
+  NVIC_SystemReset();
+  while(true);
+}
+
 void ErrorSys_::assert(bool statement, ERROR_ID type, int16_t lineNum, 
   const char *function, const char *file) { 
   
@@ -142,9 +164,19 @@ void ErrorSys_::assert(bool statement, ERROR_ID type, int16_t lineNum,
     digitalWrite(ERRSYS_ASSERT_LED_PRIMARY, LOW);
   }
 
+  // Are resets enabled?
   if (ERRSYS_ASSERT_RESET_ENABLED) {
-    __DMB;
-    NVIC_SystemReset();
+
+    if (ERRSYS_ERASE_ON_RESET) {
+      eraseProg(false);
+
+    } else if (ERRSYS_BOOTMODE_ON_RESET) {
+      eraseProg(true);
+
+    } else { // Restart program, dont erase
+      __disable_irq();                  
+      NVIC_SystemReset();              
+    }
     while(true);
   }
 }
@@ -191,5 +223,79 @@ void ErrorSys_::printError(ERROR_ID error, int16_t lineNum, const char *funcName
   SERIAL_PORT_MONITOR.print("{ File: " + (String)fileName + "}");
   SERIAL_PORT_MONITOR.println();
 }
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> SMART EEPROM MANAGER
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+#define SEE_REF_MBYTES 0
+#define SEE_REF_BCOUNT 1
+#define SEE_REF_PCOUNT 2
+#define SEE_DEFAULT_BLOCKS 5
+#define SEE_DEFAULT_PAGES 256
+#define SEE_MAX_WRITE 16      // Quad-Word
+
+static uint8_t UP[FLASH_USER_PAGE_SIZE] = { 0 }; // User Page
+
+const uint32_t SEE_REF[8][3] {
+  {512, 1, 4},
+  {1024, 1, 8},
+  {2048, 1, 16},
+  {4096, 1, 32},
+  {8192, 2, 64},
+  {16384, 3, 128},
+  {32768, 5, 256},
+  {65536, 10, 512}
+};
+
+bool EEPROMManager_::initialize(uint32_t minBytes, bool restartNow) {
+  uint8_t blockCount = 0;
+  uint16_t pageCount = 0;
+
+  // If not initialized -> get user page
+  if (!instanceInit) {
+    instanceInit = true;
+    memcpy(UP, (uint8_t *const)NVMCTRL_USER, FLASH_USER_PAGE_SIZE);
+  }
+
+  // Determine block & page count
+  for (int16_t i = 0; i < (sizeof(SEE_REF[0]) / sizeof(SEE_REF[0][0])); i++) {
+    if (SEE_REF[i][SEE_REF_MBYTES] >= minBytes) {
+      blockCount = SEE_REF[i][SEE_REF_BCOUNT];
+      pageCount = SEE_REF[i][SEE_REF_PCOUNT];
+      break;
+    }
+  }
+  if (!blockCount || pageCount) {
+    blockCount = SEE_DEFAULT_BLOCKS;
+    pageCount = SEE_DEFAULT_PAGES;
+  } 
+
+  while(!NVMCTRL->STATUS.bit.READY);
+  NVMCTRL->CTRLA.bit.WMODE = NVMCTRL_CTRLA_WMODE_MAN_Val;
+
+  UP[NVMCTRL_FUSES_SEEPSZ_ADDR - NVMCTRL_USER] = 0;
+  UP[NVMCTRL_FUSES_SEEPSZ_ADDR - NVMCTRL_USER] = (NVMCTRL_FUSES_SEESBLK(blockCount) 
+    | NVMCTRL_FUSES_SEEPSZ((uint8_t)(log2(pageCount) - 2)));
+
+  for (int16_t i = 0; i < FLASH_USER_PAGE_SIZE; i += SEE_MAX_WRITE) {
+    memcpy((uint8_t *const)(NVMCTRL_USER + i), UP + i, SEE_MAX_WRITE);
+    NVMCTRL->ADDR.bit.ADDR = (uint32_t)(NVMCTRL_USER + i);
+    NVMCTRL->CTRLB.reg = NVMCTRL_CTRLB_CMD_WQW | NVMCTRL_CTRLB_CMDEX_KEY;
+    while(!NVMCTRL->STATUS.bit.READY);
+  }
+  // Restart if specified
+  if (restartNow) {
+    __disable_irq();
+    __DSB();
+    NVIC_SystemReset();
+    while(true);
+  } else {
+    return true;
+  }
+}
+
+
+bool EEPROMManager_::isInitialized() { return NVMCTRL->SEESTAT.bit.SBLK; }
 
 

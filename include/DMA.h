@@ -9,7 +9,7 @@ class ChecksumGen;
 class TransferDescriptor;
 
 typedef void (*DMACallbackFunction)(DMA_CALLBACK_REASON reason, TransferChannel &source, 
-int16_t descriptorIndex, int16_t currentTrigger, ERROR_ID error);
+int16_t descriptorIndex);
 
 typedef void (*ChecksumCallback)(ERROR_ID error, int16_t bytesWritten);
 
@@ -309,7 +309,7 @@ class ChecksumGen {
   private:
     friend ChecksumSettings;
     friend void ChecksumIRQHandler(DMA_CALLBACK_REASON reason, TransferChannel &source, 
-      int16_t descriptorIndex, int16_t currentTrigger, ERROR_ID error);
+      int16_t descriptorIndex);
 
     TransferChannel *channel;
     TransferDescriptor writeDesc;

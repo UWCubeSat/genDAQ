@@ -30,6 +30,8 @@
 #define BOARD_FEATHER_M4_EXPRESS_CAN__
 #define BOARD_PIN_COUNT 44
 #define BOARD_ADC_PERIPH 1
+#define BOARD_ADC_MODULE_COUNT 2
+#define BOARD_ADC_IRQ_COUNT 2
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 ///// SECTION -> GLOBAL TOOLS
@@ -314,9 +316,8 @@ enum I2C_STATUS : uint8_t {
 ///// SECTION -> ADC
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
+//// ADC SYS ////
 #define ADC_MAX_PINS 12
-#define ADC_IRQ_COUNT 2
-#define ADC_MODULE_COUNT 2
 #define ADC_MAX_MODULE_NUM 1
 #define ADC_DEFAULT_MODULE ADC0
 #define ADC_DEFAULT_MODULE_NUM 0
@@ -325,9 +326,45 @@ enum I2C_STATUS : uint8_t {
 #define ADC_DB_INCREMENT 124
 #define ADC_DEFAULT_DB_OVERCLEAR 32
 
+//// ADC SETTINGS ////
+#define ADC_CLOCK_DIVISOR_MAX ADC_CTRLA_PRESCALER_DIV256_Val
+#define ADC_SAMPLE_DURATION_MAX_VAL 64
+#define ADC_SAMPLE_MAX_COUNT 10
+#define ADC_RESOLUTION_MAX_VAL 16
+#define ADC_GAINCORR_MAX_VAL 4095
+#define ADC_OFFCORR_MAX_VAL 4095
+#define ADC_PRIORITY_LVL_MAX_VAL 3
+#define ADC_DATA_TRANSFER_MAX_SIZE 64
+
+#define ADC_CLOCK_DIVISOR_DEFAULT 5
+#define ADC_DEFAULT_RESOLUTION 0
+#define ADC_DEFAULT_RESOLUTION_VAL 12
+#define ADC_DEFAULT_PRIORITY_LVL 1
+#define ADC_DEFAULT_DATA_TRANSFER_SIZE 16
+#define ADC_DEFAULT_DEST_CORRECT false
+
+
+
 enum ADC_MODULE : uint8_t {
   ADC_MODULE0,
   ADC_MODULE1
+};
+
+enum ADC_WINDOW_MODE : uint8_t {
+  WINDOW_MODE_DISABLE            = 0,
+  WINDOW_MODE_RESULT_GREATER     = 1,
+  WINDOW_MODE_WINLUT_LESS        = 2,
+  WINDOW_MODE_RESULT_BOUNDED     = 3,
+  WINDOW_MODE_RESULT_NOT_BOUNDED = 4
+};
+
+enum ADC_REFERENCE : uint8_t {
+  REFERENCE_INTERNAL        = 0,
+  REFERENCE_VCC_HALF        = 2,
+  REFERENCE_VCC_WHOLE       = 3,
+  REFERENCE_EXTERNAL_INPUT1 = 4,
+  REFERENCE_EXTERNAL_INPUT2 = 5,
+  REFERENCE_EXTERNAL_INPUT3 = 6
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////

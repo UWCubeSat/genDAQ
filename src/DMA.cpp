@@ -169,53 +169,68 @@ int16_t getTrigger(bool swTriggerFlag) {
 
 void DMAC_0_Handler(void) {
   TransferChannel &channel = DMA.getChannel(DMAC->INTPEND.bit.ID);
-  DMACallbackFunction callback = channel.callback;
-  DMA_CALLBACK_REASON reason = REASON_UNKNOWN;
-  uint8_t interruptTrigger = 0;
+  DMA_CALLBACK_REASON completeReason = REASON_UNKNOWN;
 
+  // If reset called -> re-enable channel
+  if (channel.syncStatus == 3) {
+    DMAC->Channel[channel.channelIndex].CHCTRLA.bit.ENABLE = 1;
+    channel.syncStatus = 0;
+  }
   // Transfer error
-  if(DMAC->INTPEND.bit.TERR) {
-    reason = REASON_ERROR;
+  if(DMAC->Channel[channel.channelIndex].CHINTFLAG.bit.TERR) {
 
     if (DMAC->INTPEND.bit.CRCERR) {
       channel.currentError = ERROR_DMA_CRC;
+
     } else {
       channel.currentError = ERROR_DMA_TRANSFER;
       channel.transferErrorFlag = true;
     }
-
-    interruptTrigger = getTrigger(channel.swTriggerFlag);
     channel.swTriggerFlag = false;
     channel.swPendFlag = false;
     channel.syncStatus = 0;
 
+    if (channel.errorCallbacks && channel.callback != nullptr) {
+      channel.callback(REASON_ERROR, channel, channel.currentDescriptor);
+    }
+    // Clear flag
+    DMAC->Channel[channel.channelIndex].CHINTFLAG.bit.TERR = 1;
+
   // Channel suspended
-  } else if (DMAC->INTPEND.bit.SUSP) {
+  } else if (DMAC->Channel[channel.channelIndex].CHINTFLAG.bit.SUSP) {
       
     if (channel.suspendFlag) {
-      reason = REASON_SUSPENDED;
 
-    } else if (DMAC->INTPEND.bit.FERR) {
+      if (channel.suspendCallbacks && channel.callback != nullptr) {
+        channel.callback(REASON_SUSPENDED, channel, channel.currentDescriptor);
+      }
+
+    } else if (DMAC->Channel[channel.channelIndex].CHSTATUS.bit.FERR) {
       channel.suspendFlag = true;
       channel.currentError = ERROR_DMA_DESCRIPTOR;
-      reason = REASON_ERROR;
-      interruptTrigger = getTrigger(channel.swTriggerFlag);
+
+      if (channel.errorCallbacks && channel.callback != nullptr) {
+        channel.callback(REASON_ERROR, channel, channel.currentDescriptor);
+      }
 
     } else if (writebackDescriptorArray[channel.channelIndex].BTCTRL.bit.BLOCKACT
        == DMAC_BTCTRL_BLOCKACT_SUSPEND_Val) {
+
         channel.suspendFlag = true;
-        reason = REASON_TRANSFER_COMPLETE_SUSPENDED; 
         channel.currentError = ERROR_NONE;
-        interruptTrigger = getTrigger(channel.swTriggerFlag);
+        
+        completeReason = REASON_TRANSFER_COMPLETE_SUSPENDED;
         goto transferComplete;
-    }
+    } 
+    // Clear flag
+    DMAC->Channel[channel.channelIndex].CHINTFLAG.bit.SUSP;
 
   // Transfer complete
-  } else if (DMAC->INTPEND.bit.TCMPL) {
-    reason = REASON_TRANSFER_COMPLETE_STOPPED;
+  } else if (DMAC->Channel[channel.channelIndex].CHINTFLAG.bit.TCMPL) {
     channel.currentError = ERROR_NONE;
-    interruptTrigger = getTrigger(channel.swTriggerFlag);
+    completeReason = REASON_TRANSFER_COMPLETE_STOPPED;
 
+    // #Goto
     transferComplete: {
       channel.swTriggerFlag = channel.swPendFlag;
       channel.swPendFlag = false;
@@ -227,27 +242,13 @@ void DMAC_0_Handler(void) {
           channel.currentDescriptor = 0;
         }
       }
+      if (channel.transferCompleteCallbacks && channel.callback != nullptr) {
+        channel.callback(completeReason, channel, channel.currentDescriptor);
+      }
     }
+    // Clear flag
+    DMAC->Channel[channel.channelIndex].CHINTFLAG.bit.TCMPL;
   }
-  // If reset called -> re-enable channel
-  if (channel.syncStatus == 3) {
-    DMAC->Channel[channel.channelIndex].CHCTRLA.bit.ENABLE = 1;
-    channel.syncStatus = 0;
-  }
-  if (channel.callback != nullptr) {
-
-    // If callback reason matches accepted callback -> call callback
-    if ((channel.transferCompleteCallbacks && (reason == REASON_TRANSFER_COMPLETE_STOPPED
-    || reason == REASON_TRANSFER_COMPLETE_SUSPENDED))
-    || (channel.errorCallbacks && reason == REASON_ERROR)
-    || (channel.suspendCallbacks && reason == REASON_SUSPENDED)) {
-      callback(reason, channel, channel.currentDescriptor, interruptTrigger, channel.currentError);
-    }
-  }
-  // Clear all interrupt flags
-  DMAC->Channel[channel.channelIndex].CHINTFLAG.bit.SUSP = 1;
-  DMAC->Channel[channel.channelIndex].CHINTFLAG.bit.TCMPL = 1;
-  DMAC->Channel[channel.channelIndex].CHINTFLAG.bit.TERR = 1;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1356,7 +1357,7 @@ void TransferChannel::unloopDescriptors(bool updateWriteback) {
 static ChecksumGen *chksumArray[DMA_MAX_CHECKSUM] = { nullptr };
 
 void ChecksumIRQHandler(DMA_CALLBACK_REASON reason, TransferChannel &source, 
-int16_t descriptorIndex, int16_t currentTrigger, ERROR_ID error) {
+int16_t descriptorIndex) {
   ChecksumGen *chksum = chksumArray[source.getOwnerID()];
   if (chksum == nullptr) return;
 
@@ -1366,16 +1367,16 @@ int16_t descriptorIndex, int16_t currentTrigger, ERROR_ID error) {
   }
 
   // If finished or error -> call callback, else -> trigger
-  if (chksum->remainingCycles <= 0 || error) {
+  if (chksum->remainingCycles <= 0 || source.getError()) {
     int16_t remainingByteCount = chksum->remainingBytes();
     chksum->remainingCycles = 0;
-    (*chksum->callback)(error, remainingByteCount);
+    (*chksum->callback)(source.getError(), remainingByteCount);
     
   } else {
     DMAC->SWTRIGCTRL.reg |= (1 << source.channelIndex);
   }
 }
-                                                                                           //////////////////////////// ADD ASSERT NOT NULL CHANNEL
+                                                                                          
 ChecksumGen::ChecksumGen(int16_t ownerID) :
   readDesc(nullptr, nullptr, 0), writeDesc(nullptr, nullptr, 0), ownerID(ownerID) {       
   for (int16_t i = 0; i < DMA_MAX_CHECKSUM; i++) {
