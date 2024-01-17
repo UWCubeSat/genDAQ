@@ -290,11 +290,9 @@ bool EEPROMManager_::initialize(uint32_t minBytes, bool restartNow) {
     __DSB();
     NVIC_SystemReset();
     while(true);
-  } else {
-    return true;
   }
+  return true;
 }
-
 
 bool EEPROMManager_::isInitialized() { return NVMCTRL->SEESTAT.bit.SBLK; }
 

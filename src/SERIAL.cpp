@@ -63,7 +63,7 @@ SIO_TYPE SIOBus::getType() { return baseType; }
 
 // Note -> Interrupt connected to DMA -> handles errors & busy flag only
 void I2CdmaCallback(DMA_CALLBACK_REASON reason, TransferChannel &channel, 
-  int16_t triggerType, int16_t descIndex, ERROR_ID error) {
+  int16_t triggerType) {
   /*
   // Get I2C bus obj associated with callback & reset busy DMA (opp) flag
   I2CBus *source = static_cast<I2CBus*>(IOManager.getActiveIO(channel.getOwnerID()));
@@ -102,12 +102,12 @@ bool I2CBus::requestData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16) 
 
   // Set up DMA to write register addr                                             
   writeChannel->enable();
-  readChannel->resetTransfer(true);
+  writeChannel->resetTransfer(true);
   writeChannel->enableExternalTrigger();
   writeChannel->setDescriptor(regDesc, true);
+  writeChannel->setAllValid(true);
   
-  // Set up the I2C peripheral
-                                                            
+  // Set up the I2C peripheral                                    
   s->I2CM.ADDR.reg = SERCOM_I2CM_ADDR_LENEN              // Enable auto length           
     | SERCOM_I2CM_ADDR_LEN(regAddrLength)                // Set length of data to write
     | SERCOM_I2CM_ADDR_ADDR(this->deviceAddr << 1        // Load address of device into reg -> "0" denotes write req
@@ -135,6 +135,7 @@ bool I2CBus::readData(int16_t readCount, void *dataDestination) {
   readChannel->resetTransfer(true);
   readChannel->setAllValid(true);
   readChannel->enableExternalTrigger();
+  readChannel->setAllValid(true);
 
   // Send device addr on I2C line
   s->I2CM.ADDR.reg = SERCOM_I2CM_ADDR_LENEN        // Enable auto length           
@@ -176,6 +177,7 @@ bool I2CBus::writeData(uint8_t deviceAddr, uint16_t registerAddr, bool reg16,
   writeChannel->resetTransfer(true);
   writeChannel->setDescriptors(descs, 2, true, false);
   writeChannel->enableExternalTrigger();
+  writeChannel->setAllValid(true);
 
   // Enable I2C peripheral
   s->I2CM.ADDR.reg = SERCOM_I2CM_ADDR_LENEN        // Enable auto length           
@@ -242,8 +244,6 @@ bool I2CBus::resetBus(bool hardReset) {
   }
 }
 
-
-
 bool I2CBus::init() {
 
   // Ensure given pins support I2CBus transmission
@@ -259,7 +259,7 @@ bool I2CBus::init() {
   PORT->Group[g_APinDescription[SDA].ulPort].PINCFG[g_APinDescription[SDA].ulPin].reg 
     = PORT_PINCFG_DRVSTR | PORT_PINCFG_PULLEN | PORT_PINCFG_PMUXEN;
   PORT->Group[g_APinDescription[SDA].ulPort].PMUX[g_APinDescription[SDA].ulPin >> 1].reg 
-    = PORT_PMUX_PMUXO(g_APinDescription[SDA].ulPinType) | PORT_PMUX_PMUXE(g_APinDescription[SDA].ulPinType); // THIS MAY BE WRONG
+    = PORT_PMUX_PMUXO(g_APinDescription[SDA].ulPinType) | PORT_PMUX_PMUXE(g_APinDescription[SDA].ulPinType); 
 
   // Enable the sercom channel's interrupt vectors
   NVIC_ClearPendingIRQ(SERCOM_REF[sNum].baseIRQ);	
@@ -330,7 +330,7 @@ bool I2CBus::initDMA() {
      setDataSize(1)
     .setAction(ACTION_NONE)
     .setIncrementConfig(true, false)
-    .setDestination((uint32_t)&s->I2CM.DATA.reg, false);                 //////// NOTE -> ALL DMAC SOURCE/DESTINATIONS MAY BE INCORRECT...
+    .setDestination((uint32_t)&s->I2CM.DATA.reg, false);                 
 
   regDesc-> 
      setDataSize(1)
@@ -556,7 +556,7 @@ void SPIBus::init() {
   NVIC_DisableIRQ(SERCOM_REF[sNum].baseIRQ);
   NVIC_EnableIRQ(SERCOM_REF[sNum].baseIRQ);
 
-  s->SPI.INTENSET.reg |=                  ///// THIS IS SUBJECT TO CHANGE....
+  s->SPI.INTENSET.reg |=                
     SERCOM_SPI_INTENSET_ERROR 
     | SERCOM_SPI_INTENSET_RXC
     | SERCOM_SPI_INTENSET_TXC;
@@ -579,4 +579,53 @@ SPIBus::SPISettings &SPIBus::SPISettings::changeCTRLA(uint32_t resetMask, uint32
   return *this;
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////
+///// SECTION -> UART CLASS
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
+#define NULL_PIN -1
+
+UARTBus::UARTBus(Sercom *s) {
+  resetFields();
+  this->s = s;
+  sercomNum = GET_SERCOM_NUM(s);
+}
+
+bool UARTBus::begin() {
+  if (begun) return true;
+
+  GCLK->PCHCTRL[SERCOM_REF[sercomNum].clock].bit.CHEN = 1;  // Enable clock channel
+  GCLK->PCHCTRL[SERCOM_REF[sercomNum].clock].bit.GEN = 1;   // Enable clock generator         /////////// PROB CHANGE -> HAVE SLOW + FAST CLOCK...
+
+  // Restart the USART peripheral
+  s->USART.CTRLA.bit.SWRST = 1;
+  while(s->USART.SYNCBUSY.bit.SWRST);
+
+  NVIC_ClearPendingIRQ((IRQn_Type)(SERCOM_REF[sercomNum].baseIRQ));
+  NVIC_SetPriority((IRQn_Type)(SERCOM_REF[sercomNum].baseIRQ), priorityLvl);
+  NVIC_EnableIRQ((IRQn_Type)(SERCOM_REF[sercomNum].baseIRQ));
+
+}
+
+
+///// These should really all be refactored to use a central "PIN" class...
+bool UARTBus::attachPins(uint8_t rxPin, uint8_t txPin, int16_t rtsPin, int16_t ctsPin, 
+  uint8_t rxPad) {
+
+  this->rxPin = rxPin;
+  this->txPin = txPin;
+  this->rxPad = CLAMP(rxPad, 0, 3);
+  this->rtsPin = MIN(rtsPin, NULL_PIN);
+  this->ctsPin = MIN(ctsPin, NULL_PIN);
+};
+
+
+
+
+void UARTBus::resetFields() {
+  // TO DO
+}
+
+void UARTBus::initPins() {
+
+}

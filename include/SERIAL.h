@@ -212,7 +212,62 @@ class SPIBus : public SIOBus {
 
 class UARTBus : public SIOBus {
 
+  public:
 
+    UARTBus(Sercom *s) {}
+
+    bool begin();
+
+    bool end();
+
+    bool attachPins(uint8_t rxPin, uint8_t txPin, int16_t rtsPin, int16_t ctsPin,
+      uint8_t rxPad);
+
+    bool detachPins();
+
+    bool enable();
+
+    bool read(void *dataDestination, uint16_t maxBytes);
+
+    bool write(void *dataSource, uint16_t bytes);
+
+    bool readBusy();
+
+    bool writeBusy();
+    
+    bool abortOpperation();
+
+    bool disable();
+
+    struct UARTSettings {
+
+
+      private:
+        friend UARTBus;
+        UARTBus *super;
+        explicit UARTSettings();
+    };
+
+
+  private:
+    friend UARTSettings;
+    Sercom *s;
+    uint8_t sercomNum;
+    uint8_t txPin;
+    uint8_t rxPin;
+    int16_t rtsPin;
+    int16_t ctsPin;
+    uint8_t rxPad;
+
+    bool begun;
+
+    int16_t priorityLvl;
+
+    void resetFields();
+
+    void initPins();
+
+    void exitPins();
 
 };
 

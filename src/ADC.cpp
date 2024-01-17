@@ -400,7 +400,9 @@ ADCModule::ADCSettings &ADCModule::ADCSettings::setWindowModeConfig(ADC_WINDOW_M
 
   if (super->currentState == 1) {
     super->adc->CTRLB.bit.WINMODE = (uint8_t)mode;
-    super->adc->CTRLB.bit.WINSS = (uint8_t)useAccumulatedResult; // May need to add addition syncbusy between these!
+    while(super->adc->SYNCBUSY.bit.CTRLB);
+    
+    super->adc->CTRLB.bit.WINSS = (uint8_t)useAccumulatedResult;
     while(super->adc->SYNCBUSY.bit.CTRLB);
 
     super->adc->WINUT.bit.WINUT = upperBound;
